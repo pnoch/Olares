@@ -76,6 +76,7 @@ stream {
         listen {{ $cfg.StreamAPIAddress }};
 
         content_by_lua_block {
+            # 设置用户信息到lua内存中
             server.run()
         }
     }

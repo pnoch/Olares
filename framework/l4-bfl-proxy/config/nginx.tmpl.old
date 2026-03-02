@@ -9,7 +9,8 @@ daemon on;
 worker_processes {{ $cfg.WorkerProcesses }};
 
 worker_rlimit_nofile 65535;
-
+# 对于长连接比如websocket,如果进行了reload操作,在超时后这个连接会断开
+# 如果不设置这个这个值,可能会同时存在多个worker
 worker_shutdown_timeout 240s;
 
 events {

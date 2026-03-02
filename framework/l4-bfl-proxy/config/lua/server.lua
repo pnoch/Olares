@@ -37,11 +37,15 @@ function _M.run()
 end
 
 local function match_user(server_name)
+    ngx.log(ngx.ERR, "usersList:match_user:server_name " .. server_name .. "")
+
     -- load users
     local users = configuration.list_users()
     if not users then
         return
     end
+    ngx.log(ngx.ERR, "usersList " .. cjson.encode(users) .. "")
+
 
     local ephemeral_users = {}
     local admin_users = {}
@@ -54,8 +58,8 @@ local function match_user(server_name)
         end
     end
 
-    ngx.log(ngx.INFO, "ephemeral users: ", cjson.encode(ephemeral_users))
-    ngx.log(ngx.INFO, "admin users: ", cjson.encode(admin_users))
+    ngx.log(ngx.ERR, "ephemeral users: ", cjson.encode(ephemeral_users))
+    ngx.log(ngx.ERR, "admin users: ", cjson.encode(admin_users))
 
     local reg = ""
 
@@ -193,6 +197,8 @@ function _M.preread()
     ngx.log(ngx.INFO, "preread ssl server_name: " .. server_name)
 
     local curr_user = match_user(server_name)
+    ngx.log(ngx.ERR, "curr_user " .. cjson.encode(curr_user) .. "")
+
     if not curr_user then
         ngx.log(ngx.ERR, "server name " .. server_name .. ", could not match any users")
         return ngx.exit(400)

@@ -86,6 +86,7 @@ var (
 		Resource: "applications",
 	}
 
+	// 由controller写入用户信息
 	luaNgxStreamPort = 2444
 
 	luaNgxStreamAPIAddress = fmt.Sprintf("127.0.0.1:%d", luaNgxStreamPort)
@@ -179,11 +180,11 @@ func (s *Server) init() error {
 
 	// cfg
 	s.Cfg = &Cfg{
-		WorkerProcesses:    workerProcesses,
-		StreamAPIAddress:   luaNgxStreamAPIAddress,
-		SSLServerPort:      sslServerPort,
-		SSLProxyServerPort: sslProxyServerPort,
-		StreamServers:      streamServers,
+		WorkerProcesses:    workerProcesses,        // 2
+		StreamAPIAddress:   luaNgxStreamAPIAddress, // 127.0.0.1:2444
+		SSLServerPort:      sslServerPort,          // 443
+		SSLProxyServerPort: sslProxyServerPort,     // 444
+		StreamServers:      streamServers,          // windows,steam等这些需要走tcp,udp的
 	}
 
 	klog.Info("ensure nginx processes is running")
@@ -214,11 +215,14 @@ func (s *Server) waitForNgxStartup() bool {
 }
 
 func (s *Server) startNgx() error {
+	// inContainer这个参数感觉没有存在的必要
 	if !inContainer {
 		klog.Warning("not in container, ignore")
 		return nil
 	}
 
+	// 如果已经running, 则直接退出
+	// 这里是读取的pid文件，文件里是否有正确的pid来判断nginx是否已经启动
 	if nginx.IsRunning() {
 		klog.Warning("nginx process is running, ignore")
 		return nil
@@ -232,6 +236,8 @@ func (s *Server) startNgx() error {
 	}
 
 	klog.Infof("starting nginx processes")
+	// 启动nginx
+	// 理论上这也是可能失败的，但是没处理
 	go s.ngxCmd.Start()
 	//if err != nil {
 	//	return fmt.Errorf("%v\n%v", err, string(out))
@@ -377,6 +383,7 @@ func (s *Server) listApplications() ([]string, []string, []string, map[string][]
 	var customDomainApps []string
 	var customDomainAppsWithUsers = make(map[string][]string)
 
+	// 获取app列表
 	list, err := s.client.Resource(appGVR).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, nil, nil, nil
@@ -392,6 +399,8 @@ func (s *Server) listApplications() ([]string, []string, []string, map[string][]
 		return nil, nil, nil, nil
 	}
 
+	// 获取URL最前面那一段
+	// 如44e535c5.olaresid.olares.cn会返回`44e535c5`
 	getAppPrefix := func(entrancecount, index int, appid string) string {
 		if entrancecount == 1 {
 			return appid
@@ -461,6 +470,10 @@ func (s *Server) listApplications() ([]string, []string, []string, map[string][]
 func (s *Server) listUsers() (Users, error) {
 	publicAppIdList, publicCustomDomainAppList, customDomainAppList, customDomainAppListWithUsers := s.listApplications()
 	_ = customDomainAppList
+	klog.Infof("publicAppIdList: %v", publicAppIdList)                           // [headscale 44e535c5 qb olares-app1]
+	klog.Infof("publicCustomDomainAppList: %v", publicCustomDomainAppList)       // 添加自定义域名后,[test-app-domain3.bytetrade.com]
+	klog.Infof("customDomainAppList: %v", customDomainAppList)                   // 添加自定义域名后,[test-app-domain3.bytetrade.com]
+	klog.Infof("customDomainAppListWithUsers: %v", customDomainAppListWithUsers) // 添加自定义域名后,map[olaresid:[test-app-domain3.bytetrade.com]]
 
 	list, err := s.client.Resource(iamUserGVR).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
@@ -671,16 +684,21 @@ func (s *Server) render() error {
 	klog.Info("reload nginx successfully")
 
 	klog.Info("list users, and write to lua server")
+	// 在reload之后，ListUser写到2444,有什么影响吗？
+	// listUsers读取的是user crd
 	users, err := s.listUsers()
 	if err != nil {
 		return messageWithError("write lua server", fmt.Errorf("list users, %v", err))
 	}
+	klog.Infof("listUsers: %#v", users)
 
+	// 如果2444端口没起来,也是会等待120秒
 	if err = s.waitForStreamLuaPort(); err != nil {
 
 		return messageWithError("wait stream lua port listen", err)
 	}
 
+	// 将user的信息写入到lua端口
 	if err = s.writeLuaConfig(users); err != nil {
 		klog.Infof("first to write lua server err=%v", err)
 		return messageWithError("first to write lua server", err)
@@ -807,14 +825,18 @@ func main() {
 		klog.Error(err)
 		return
 	}
+	klog.Infof("ServerConfig: %#v", s.Cfg)
 
 	klog.Info("waiting for nginx process is running")
+
+	// 等待nginx进程启动，超时时间为120秒
 	if !s.waitForNgxStartup() {
 		klog.Error("nginx process is still not running yet")
 		return
 	}
 
 	klog.Info("render /etc/nginx/nginx.conf")
+	// 渲染/etc/nginx/nginx.conf
 	if err = s.render(); err != nil {
 		klog.Errorf("render nginx err, %v", err)
 		return
@@ -822,10 +844,14 @@ func main() {
 
 	klog.Info("watch iam users")
 	go s.watchApp(signal.StopCh(), time.Second)
+
+	// user变化将用户信息写入到2444
 	s.watchUser(signal.StopCh(), 5*time.Second)
 
 	klog.Info("all done")
 }
+
+// 这个watch写了3个s.client.Resource(appGVR).Watch,感觉有点诡异
 
 func (s *Server) watchApp(stop <-chan struct{}, timeAfter time.Duration) {
 	time.Sleep(timeAfter)
@@ -865,6 +891,7 @@ func (s *Server) watchApp(stop <-chan struct{}, timeAfter time.Duration) {
 			klog.Infof("watch app: received event, %v,kind=%v", event.Type, event.Object.GetObjectKind().GroupVersionKind().Kind)
 			switch event.Type {
 			case watch.Added, watch.Modified, watch.Deleted:
+				// 增加exposePort, 渲染nginx.conf然后reload
 				err = s.renderAndReload()
 				if err != nil {
 					klog.Errorf("render and reload failed err=%v", err)
@@ -895,11 +922,14 @@ func (s *Server) allApps() (*appv2alpha1.ApplicationList, error) {
 	return &appList, nil
 }
 
+// 从app列表中,获取stream servers
 func (s *Server) generateStreamServers() ([]StreamServer, error) {
 	users, err := s.client.Resource(iamUserGVR).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	// username -> bfl host ip
+	// 这里为什么要直接用ip, 是不是与nginx有关?
 	bflServiceMap := make(map[string]string)
 	for _, user := range users.Items {
 		svcName := fmt.Sprintf("bfl.%s-%s", userNamespacePrefix, user.GetName())
@@ -910,6 +940,7 @@ func (s *Server) generateStreamServers() ([]StreamServer, error) {
 		}
 		bflServiceMap[user.GetName()] = host
 	}
+	// 获取app列表
 	appList, err := s.allApps()
 	if err != nil {
 		return nil, err
