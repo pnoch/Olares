@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -115,19 +116,30 @@ func (s *XdsServer) updateSnapshot(ctx context.Context, xdsSnapshot *message.Xds
 func (s *XdsServer) logSnapshot(xdsSnapshot *message.XdsSnapshot) {
 	marshaler := protojson.MarshalOptions{Indent: "  "}
 
+	listeners := make([]json.RawMessage, 0, len(xdsSnapshot.Listeners))
 	for _, r := range xdsSnapshot.Listeners {
 		if msg, ok := r.(proto.Message); ok {
 			if data, err := marshaler.Marshal(msg); err == nil {
-				klog.V(3).Infof("xds-server: listener: %s", string(data))
+				listeners = append(listeners, data)
 			}
 		}
 	}
+
+	clusters := make([]json.RawMessage, 0, len(xdsSnapshot.Clusters))
 	for _, r := range xdsSnapshot.Clusters {
 		if msg, ok := r.(proto.Message); ok {
 			if data, err := marshaler.Marshal(msg); err == nil {
-				klog.V(3).Infof("xds-server: cluster: %s", string(data))
+				clusters = append(clusters, data)
 			}
 		}
+	}
+
+	full := map[string]interface{}{
+		"listeners": listeners,
+		"clusters":  clusters,
+	}
+	if data, err := json.MarshalIndent(full, "", "  "); err == nil {
+		klog.V(3).Infof("xds-server: full envoy config:\n%s", string(data))
 	}
 }
 

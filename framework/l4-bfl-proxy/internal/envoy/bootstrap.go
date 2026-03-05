@@ -47,7 +47,7 @@ static_resources:
     typed_extension_protocol_options:
       envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
         "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-        explicit_http_version:
+        explicit_http_config:
           http2_protocol_options: {}
 admin:
   address:
@@ -103,7 +103,7 @@ func DefaultEnvoyConfig() *EnvoyConfig {
 	}
 }
 
-func StartEnvoy(ctx context.Context, cfg *EnvoyConfig) error {
+func StartEnvoy(ctx context.Context, cancel context.CancelFunc, cfg *EnvoyConfig) error {
 	args := []string{
 		"-c", cfg.BootstrapPath,
 		"--service-cluster", "l4-bfl-proxy",
@@ -122,8 +122,11 @@ func StartEnvoy(ctx context.Context, cfg *EnvoyConfig) error {
 
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			klog.Errorf("envoy: process exited: %v", err)
+			klog.Errorf("envoy: process exited with error: %v", err)
+		} else {
+			klog.Warning("envoy: process exited unexpectedly")
 		}
+		cancel()
 	}()
 	return nil
 }

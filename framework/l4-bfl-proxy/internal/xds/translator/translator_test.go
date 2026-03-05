@@ -3,9 +3,10 @@ package translator
 import (
 	"testing"
 
-	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	ppupstreamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/proxy_protocol/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -355,7 +356,12 @@ func TestBuildCluster_ProxyProtocolUpstream(t *testing.T) {
 	c := buildCluster(dest, true)
 
 	require.NotNil(t, c.TransportSocket)
-	assert.Equal(t, "envoy.transport_sockets.raw_buffer", c.TransportSocket.Name)
+	assert.Equal(t, "envoy.transport_sockets.upstream_proxy_protocol", c.TransportSocket.Name)
+
+	ppUpstream := &ppupstreamv3.ProxyProtocolUpstreamTransport{}
+	require.NoError(t, c.TransportSocket.GetTypedConfig().UnmarshalTo(ppUpstream))
+	assert.Equal(t, corev3.ProxyProtocolConfig_V1, ppUpstream.Config.Version)
+	assert.Equal(t, "envoy.transport_sockets.raw_buffer", ppUpstream.TransportSocket.Name)
 }
 
 // ---------------------------------------------------------------------------

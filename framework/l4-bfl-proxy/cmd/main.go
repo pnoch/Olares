@@ -77,7 +77,7 @@ func main() {
 		klog.Fatalf("write envoy bootstrap: %v", err)
 	}
 
-	if err := envoy.StartEnvoy(ctx, envoyCfg); err != nil {
+	if err := envoy.StartEnvoy(ctx, cancel, envoyCfg); err != nil {
 		klog.Fatalf("start envoy: %v", err)
 	}
 

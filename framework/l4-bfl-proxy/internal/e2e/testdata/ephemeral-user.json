@@ -24,9 +24,16 @@
         ]
       },
       "transportSocket": {
-        "name": "envoy.transport_sockets.raw_buffer",
+        "name": "envoy.transport_sockets.upstream_proxy_protocol",
         "typedConfig": {
-          "@type": "type.googleapis.com/envoy.extensions.transport_sockets.raw_buffer.v3.RawBuffer"
+          "@type": "type.googleapis.com/envoy.extensions.transport_sockets.proxy_protocol.v3.ProxyProtocolUpstreamTransport",
+          "config": {},
+          "transportSocket": {
+            "name": "envoy.transport_sockets.raw_buffer",
+            "typedConfig": {
+              "@type": "type.googleapis.com/envoy.extensions.transport_sockets.raw_buffer.v3.RawBuffer"
+            }
+          }
         }
       }
     }
