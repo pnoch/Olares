@@ -6,6 +6,7 @@ require (
 	github.com/beclab/api v0.0.0-20250707125039-268cccf7e81c
 	github.com/envoyproxy/go-control-plane v0.13.4
 	github.com/envoyproxy/go-control-plane/envoy v1.32.3
+	github.com/stretchr/testify v1.10.0
 	github.com/telepresenceio/watchable v0.0.0-20220726211108-9bb86f92afa7
 	google.golang.org/grpc v1.70.0
 	google.golang.org/protobuf v1.36.5
@@ -40,6 +41,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	golang.org/x/net v0.32.0 // indirect
 	golang.org/x/oauth2 v0.24.0 // indirect

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"os/signal"
 	"sync"
@@ -30,6 +31,8 @@ const (
 
 func main() {
 	klog.InitFlags(nil)
+	flag.Parse()
+	defer klog.Flush()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

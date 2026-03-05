@@ -1,5 +1,7 @@
 package ir
 
+import "reflect"
+
 type ProtocolType string
 
 const (
@@ -41,6 +43,16 @@ type DestinationIR struct {
 	Name string
 	Host string
 	Port uint32
+}
+
+func (x *Xds) Equal(other *Xds) bool {
+	if x == nil && other == nil {
+		return true
+	}
+	if x == nil || other == nil {
+		return false
+	}
+	return reflect.DeepEqual(x.Listeners, other.Listeners)
 }
 
 func (x *Xds) DeepCopy() *Xds {

@@ -56,6 +56,12 @@ func (t *Translator) process(subscription <-chan watchable.Snapshot[string, *mes
 				continue
 			}
 			xds := t.translate(resources)
+
+			if old, ok := t.xdsIR.Load(update.Key); ok && old.Equal(xds) {
+				klog.V(4).Infof("translator: xdsIR unchanged for key %s, skipping", update.Key)
+				continue
+			}
+
 			t.xdsIR.Store(update.Key, xds)
 			klog.Infof("translator: published xdsIR with %d listeners", len(xds.Listeners))
 		}

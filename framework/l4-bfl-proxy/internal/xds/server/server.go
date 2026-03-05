@@ -7,6 +7,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	clusterservice "github.com/envoyproxy/go-control-plane/envoy/service/cluster/v3"
+	discoverygrpc "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	endpointservice "github.com/envoyproxy/go-control-plane/envoy/service/endpoint/v3"
+	listenerservice "github.com/envoyproxy/go-control-plane/envoy/service/listener/v3"
+	routeservice "github.com/envoyproxy/go-control-plane/envoy/service/route/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
@@ -14,12 +19,8 @@ import (
 	"github.com/telepresenceio/watchable"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
-
-	discoverygrpc "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
-	listenerservice "github.com/envoyproxy/go-control-plane/envoy/service/listener/v3"
-	clusterservice "github.com/envoyproxy/go-control-plane/envoy/service/cluster/v3"
-	endpointservice "github.com/envoyproxy/go-control-plane/envoy/service/endpoint/v3"
-	routeservice "github.com/envoyproxy/go-control-plane/envoy/service/route/v3"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/beclab/l4-bfl-proxy/internal/message"
 	"k8s.io/klog/v2"
@@ -92,7 +93,31 @@ func (s *XdsServer) updateSnapshot(ctx context.Context, xdsSnapshot *message.Xds
 	}
 	klog.Infof("xds-server: updated snapshot version=%s, listeners=%d, clusters=%d",
 		versionStr, len(xdsSnapshot.Listeners), len(xdsSnapshot.Clusters))
+
+	if klog.V(3).Enabled() {
+		s.logSnapshot(xdsSnapshot)
+	}
+
 	return nil
+}
+
+func (s *XdsServer) logSnapshot(xdsSnapshot *message.XdsSnapshot) {
+	marshaler := protojson.MarshalOptions{Indent: "  "}
+
+	for _, r := range xdsSnapshot.Listeners {
+		if msg, ok := r.(proto.Message); ok {
+			if data, err := marshaler.Marshal(msg); err == nil {
+				klog.V(3).Infof("xds-server: listener: %s", string(data))
+			}
+		}
+	}
+	for _, r := range xdsSnapshot.Clusters {
+		if msg, ok := r.(proto.Message); ok {
+			if data, err := marshaler.Marshal(msg); err == nil {
+				klog.V(3).Infof("xds-server: cluster: %s", string(data))
+			}
+		}
+	}
 }
 
 

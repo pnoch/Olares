@@ -83,7 +83,7 @@ func New(client dynamic.Interface, resources *message.ProviderResources, cfg *Co
 func (p *Provider) Name() string { return "provider" }
 
 func (p *Provider) Start(ctx context.Context) error {
-	klog.Info("provider: starting dynamic informers")
+	klog.Info("provider: starting dynamic informers...")
 
 	factory := dynamicinformer.NewDynamicSharedInformerFactory(p.client, resyncPeriod)
 	userInformer := factory.ForResource(iamUserGVR).Informer()
@@ -94,8 +94,12 @@ func (p *Provider) Start(ctx context.Context) error {
 		UpdateFunc: func(_, _ interface{}) { p.publishResources() },
 		DeleteFunc: func(_ interface{}) { p.publishResources() },
 	}
-	userInformer.AddEventHandler(handler)
-	appInformer.AddEventHandler(handler)
+	if _, err := userInformer.AddEventHandler(handler); err != nil {
+		return fmt.Errorf("add user event handler: %w", err)
+	}
+	if _, err := appInformer.AddEventHandler(handler); err != nil {
+		return fmt.Errorf("add app event handler: %w", err)
+	}
 
 	factory.Start(ctx.Done())
 	factory.WaitForCacheSync(ctx.Done())
@@ -125,6 +129,13 @@ func (p *Provider) publishResources() {
 		Users: users,
 		Apps:  apps,
 	}
+	snapshot.Sort()
+
+	if old, ok := p.resources.Load(mapKey); ok && old.Equal(snapshot) {
+		klog.V(4).Info("provider: snapshot unchanged, skipping publish")
+		return
+	}
+
 	p.resources.Store(mapKey, snapshot)
 	klog.Infof("provider: published snapshot with %d users and %d apps", len(users), len(apps))
 }

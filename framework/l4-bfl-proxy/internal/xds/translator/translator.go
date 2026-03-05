@@ -64,10 +64,17 @@ func (t *XdsTranslator) process(subscription <-chan watchable.Snapshot[string, *
 				continue
 			}
 			listeners, clusters := t.translate(xdsIR)
-			t.xdsResources.Store(update.Key, &message.XdsSnapshot{
+			newSnapshot := &message.XdsSnapshot{
 				Listeners: listeners,
 				Clusters:  clusters,
-			})
+			}
+
+			if old, ok := t.xdsResources.Load(update.Key); ok && old.Equal(newSnapshot) {
+				klog.V(4).Infof("xds-translator: xDS unchanged for key %s, skipping", update.Key)
+				continue
+			}
+
+			t.xdsResources.Store(update.Key, newSnapshot)
 			klog.Infof("xds-translator: published %d listeners, %d clusters", len(listeners), len(clusters))
 		}
 	}
