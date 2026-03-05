@@ -68,19 +68,21 @@ type Config struct {
 }
 
 type Provider struct {
-	client    dynamic.Interface
-	resources *message.ProviderResources
-	cfg       *Config
-	userStore cache.Store
-	appStore  cache.Store
-	synced    atomic.Bool
+	client      dynamic.Interface
+	resources   *message.ProviderResources
+	cfg         *Config
+	userStore   cache.Store
+	appStore    cache.Store
+	synced      atomic.Bool
+	debounceCh  chan struct{}
 }
 
 func New(client dynamic.Interface, resources *message.ProviderResources, cfg *Config) *Provider {
 	return &Provider{
-		client:    client,
-		resources: resources,
-		cfg:       cfg,
+		client:     client,
+		resources:  resources,
+		cfg:        cfg,
+		debounceCh: make(chan struct{}, 1),
 	}
 }
 
@@ -97,21 +99,9 @@ func (p *Provider) Start(ctx context.Context) error {
 	p.appStore = appInformer.GetStore()
 
 	handler := cache.ResourceEventHandlerFuncs{
-		AddFunc: func(_ interface{}) {
-			if p.synced.Load() {
-				p.publishResources()
-			}
-		},
-		UpdateFunc: func(_, _ interface{}) {
-			if p.synced.Load() {
-				p.publishResources()
-			}
-		},
-		DeleteFunc: func(_ interface{}) {
-			if p.synced.Load() {
-				p.publishResources()
-			}
-		},
+		AddFunc:    func(_ interface{}) { p.notifyChanged() },
+		UpdateFunc: func(_, _ interface{}) { p.notifyChanged() },
+		DeleteFunc: func(_ interface{}) { p.notifyChanged() },
 	}
 	if _, err := userInformer.AddEventHandler(handler); err != nil {
 		return fmt.Errorf("add user event handler: %w", err)
@@ -127,9 +117,46 @@ func (p *Provider) Start(ctx context.Context) error {
 	klog.Info("provider: informer caches synced, publishing initial snapshot")
 	p.publishResources()
 
-	<-ctx.Done()
+	p.debounceLoop(ctx)
 	klog.Info("provider: stopped")
 	return nil
+}
+
+const debounceInterval = 100 * time.Millisecond
+
+func (p *Provider) notifyChanged() {
+	if !p.synced.Load() {
+		return
+	}
+	select {
+	case p.debounceCh <- struct{}{}:
+	default:
+	}
+}
+
+func (p *Provider) debounceLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.debounceCh:
+			// Drain any queued signals and wait for a quiet period
+			timer := time.NewTimer(debounceInterval)
+		drain:
+			for {
+				select {
+				case <-p.debounceCh:
+					timer.Reset(debounceInterval)
+				case <-timer.C:
+					break drain
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				}
+			}
+			p.publishResources()
+		}
+	}
 }
 
 func (p *Provider) publishResources() {
@@ -297,6 +324,11 @@ func (p *Provider) listUsers() ([]*message.UserInfo, error) {
 			continue
 		}
 
+		cidrs := strings.Split(allowCIDR, ",")
+		sort.Strings(cidrs)
+		sort.Strings(allowedDomains)
+		sort.Strings(serverNameDomains)
+
 		info := &message.UserInfo{
 			Name:              user.Name,
 			Namespace:         fmt.Sprintf("%s-%s", p.cfg.UserNamespacePrefix, user.Name),
@@ -306,7 +338,7 @@ func (p *Provider) listUsers() ([]*message.UserInfo, error) {
 			BFLHost:           addr,
 			BFLPort:           p.cfg.BFLServicePort,
 			AccessLevel:       accessLevel,
-			AllowCIDRs:        strings.Split(allowCIDR, ","),
+			AllowCIDRs:        cidrs,
 			DenyAll:           denyAll == 1,
 			AllowedDomains:    allowedDomains,
 			ServerNameDomains: serverNameDomains,
@@ -412,6 +444,9 @@ func (p *Provider) getAppsFromCache() []appv2alpha1.Application {
 		}
 		apps = append(apps, app)
 	}
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].Spec.Name < apps[j].Spec.Name
+	})
 	return apps
 }
 
@@ -433,6 +468,9 @@ func (p *Provider) getUsersFromCache() []iamv1alpha2.User {
 		}
 		users = append(users, user)
 	}
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].Name < users[j].Name
+	})
 	return users
 }
 
