@@ -450,6 +450,17 @@ func buildCluster(dest *ir.DestinationIR, proxyProtocolUpstream bool) *clusterv3
 func buildAccessLog() *accesslogv3.AccessLog {
 	fileLog := &accesslogfilev3.FileAccessLog{
 		Path: "/dev/stdout",
+		AccessLogFormat: &accesslogfilev3.FileAccessLog_LogFormat{
+			LogFormat: &corev3.SubstitutionFormatString{
+				Format: &corev3.SubstitutionFormatString_TextFormatSource{
+					TextFormatSource: &corev3.DataSource{
+						Specifier: &corev3.DataSource_InlineString{
+							InlineString: "[%START_TIME%] %DOWNSTREAM_REMOTE_ADDRESS% -> %UPSTREAM_HOST% SNI=%REQUESTED_SERVER_NAME% duration=%DURATION%ms rx=%BYTES_RECEIVED% tx=%BYTES_SENT% flags=%RESPONSE_FLAGS%\n",
+						},
+					},
+				},
+			},
+		},
 	}
 	fileLogAny, _ := anypb.New(fileLog)
 	return &accesslogv3.AccessLog{
