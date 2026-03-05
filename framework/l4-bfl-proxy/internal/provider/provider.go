@@ -24,7 +24,7 @@ import (
 
 const (
 	mapKey          = "default"
-	resyncPeriod    = 30 * time.Second
+	resyncPeriod    = 10 * time.Minute
 	dnsLookupRetry  = 15
 	dnsRetryBackoff = 3 * time.Second
 )
