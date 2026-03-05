@@ -45,28 +45,39 @@ func (t *Translator) Start(ctx context.Context) error {
 }
 
 func (t *Translator) process(subscription <-chan watchable.Snapshot[string, *message.Resources]) {
+	first := true
 	for snapshot := range subscription {
+		if first {
+			first = false
+			for key, val := range snapshot.State {
+				if val != nil {
+					t.handleUpdate(key, val)
+				}
+			}
+		}
 		for _, update := range snapshot.Updates {
 			if update.Delete {
 				t.xdsIR.Delete(update.Key)
 				continue
 			}
-			resources := update.Value
-			if resources == nil {
-				continue
+			if update.Value != nil {
+				t.handleUpdate(update.Key, update.Value)
 			}
-			xds := t.Translate(resources)
-
-			if old, ok := t.xdsIR.Load(update.Key); ok && old.Equal(xds) {
-				klog.V(4).Infof("translator: xdsIR unchanged for key %s, skipping", update.Key)
-				continue
-			}
-
-			t.xdsIR.Store(update.Key, xds)
-			klog.Infof("translator: published xdsIR with %d listeners", len(xds.Listeners))
 		}
 	}
 	klog.Info("translator: subscription closed")
+}
+
+func (t *Translator) handleUpdate(key string, resources *message.Resources) {
+	xds := t.Translate(resources)
+
+	if old, ok := t.xdsIR.Load(key); ok && old.Equal(xds) {
+		klog.V(4).Infof("translator: xdsIR unchanged for key %s, skipping", key)
+		return
+	}
+
+	t.xdsIR.Store(key, xds)
+	klog.Infof("translator: published xdsIR with %d listeners", len(xds.Listeners))
 }
 
 func (t *Translator) Translate(resources *message.Resources) *ir.Xds {

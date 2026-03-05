@@ -60,7 +60,18 @@ func (s *XdsServer) Start(ctx context.Context) error {
 
 func (s *XdsServer) watchAndUpdate(ctx context.Context) {
 	subscription := s.xdsResources.Subscribe(ctx)
+	first := true
 	for snapshot := range subscription {
+		if first {
+			first = false
+			for _, val := range snapshot.State {
+				if val != nil {
+					if err := s.updateSnapshot(ctx, val); err != nil {
+						klog.Errorf("xds-server: update snapshot: %v", err)
+					}
+				}
+			}
+		}
 		for _, update := range snapshot.Updates {
 			if update.Delete || update.Value == nil {
 				continue

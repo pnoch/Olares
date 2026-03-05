@@ -7,12 +7,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	iamv1alpha2 "github.com/beclab/api/iam/v1alpha2"
 	"github.com/beclab/l4-bfl-proxy/internal/message"
 	appv2alpha1 "github.com/beclab/l4-bfl-proxy/util/app/v2alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/dynamic"
@@ -70,6 +71,9 @@ type Provider struct {
 	client    dynamic.Interface
 	resources *message.ProviderResources
 	cfg       *Config
+	userStore cache.Store
+	appStore  cache.Store
+	synced    atomic.Bool
 }
 
 func New(client dynamic.Interface, resources *message.ProviderResources, cfg *Config) *Provider {
@@ -89,10 +93,25 @@ func (p *Provider) Start(ctx context.Context) error {
 	userInformer := factory.ForResource(iamUserGVR).Informer()
 	appInformer := factory.ForResource(appGVR).Informer()
 
+	p.userStore = userInformer.GetStore()
+	p.appStore = appInformer.GetStore()
+
 	handler := cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(_ interface{}) { p.publishResources() },
-		UpdateFunc: func(_, _ interface{}) { p.publishResources() },
-		DeleteFunc: func(_ interface{}) { p.publishResources() },
+		AddFunc: func(_ interface{}) {
+			if p.synced.Load() {
+				p.publishResources()
+			}
+		},
+		UpdateFunc: func(_, _ interface{}) {
+			if p.synced.Load() {
+				p.publishResources()
+			}
+		},
+		DeleteFunc: func(_ interface{}) {
+			if p.synced.Load() {
+				p.publishResources()
+			}
+		},
 	}
 	if _, err := userInformer.AddEventHandler(handler); err != nil {
 		return fmt.Errorf("add user event handler: %w", err)
@@ -104,6 +123,7 @@ func (p *Provider) Start(ctx context.Context) error {
 	factory.Start(ctx.Done())
 	factory.WaitForCacheSync(ctx.Done())
 
+	p.synced.Store(true)
 	klog.Info("provider: informer caches synced, publishing initial snapshot")
 	p.publishResources()
 
@@ -140,23 +160,12 @@ func (p *Provider) publishResources() {
 	klog.Infof("provider: published snapshot with %d users and %d apps", len(users), len(apps))
 }
 
-// listApps mirrors the original listApplications + generateStreamServers logic.
+// listApps reads applications from the informer cache and builds AppInfo slice.
 func (p *Provider) listApps() ([]*message.AppInfo, error) {
-	list, err := p.client.Resource(appGVR).List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list applications: %w", err)
-	}
-	data, err := list.MarshalJSON()
-	if err != nil {
-		return nil, fmt.Errorf("marshal applications: %w", err)
-	}
-	var appList appv2alpha1.ApplicationList
-	if err = json.Unmarshal(data, &appList); err != nil {
-		return nil, fmt.Errorf("unmarshal applications: %w", err)
-	}
+	appList := p.getAppsFromCache()
 
 	var result []*message.AppInfo
-	for _, app := range appList.Items {
+	for _, app := range appList {
 		entrances := make([]message.EntranceInfo, 0, len(app.Spec.Entrances))
 		for _, e := range app.Spec.Entrances {
 			entrances = append(entrances, message.EntranceInfo{
@@ -187,30 +196,19 @@ func (p *Provider) listApps() ([]*message.AppInfo, error) {
 	return result, nil
 }
 
-// listUsers ports the original listUsers logic: parse user annotations, resolve BFL host, build UserInfo slice.
+// listUsers reads users from the informer cache, parses annotations, resolves BFL host, builds UserInfo slice.
 func (p *Provider) listUsers() ([]*message.UserInfo, error) {
 	publicAppIDs, publicCustomDomainApps, _, customDomainAppsWithUsers := p.listApplicationDetails()
 
-	list, err := p.client.Resource(iamUserGVR).List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list users: %w", err)
-	}
-	data, err := list.MarshalJSON()
-	if err != nil {
-		return nil, fmt.Errorf("marshal users: %w", err)
-	}
-	var userList iamv1alpha2.UserList
-	if err = json.Unmarshal(data, &userList); err != nil {
-		return nil, fmt.Errorf("unmarshal users: %w", err)
-	}
+	userList := p.getUsersFromCache()
 
 	getUserByName := func(name string) *iamv1alpha2.User {
-		for i := range userList.Items {
-			if userList.Items[i].Name == name {
-				return &userList.Items[i]
+		for i := range userList {
+			if userList[i].Name == name {
+				return &userList[i]
 			}
-			if name == "cli" && userList.Items[i].Annotations[userAnnotationOwnerRole] == "owner" {
-				return &userList.Items[i]
+			if name == "cli" && userList[i].Annotations[userAnnotationOwnerRole] == "owner" {
+				return &userList[i]
 			}
 		}
 		return nil
@@ -234,7 +232,7 @@ func (p *Provider) listUsers() ([]*message.UserInfo, error) {
 	}
 	var sortable []userSortable
 
-	for _, user := range userList.Items {
+	for _, user := range userList {
 		isEphemeralAnno := getAnnotation(&user, userAnnotationIsEphemeral)
 		if !isValidUser(&user) && isEphemeralAnno == "" {
 			continue
@@ -282,6 +280,7 @@ func (p *Provider) listUsers() ([]*message.UserInfo, error) {
 
 		var accessLevel uint64
 		if accLevel != "" {
+			var err error
 			accessLevel, err = strconv.ParseUint(accLevel, 10, 64)
 			if err != nil {
 				klog.Errorf("provider: user %q parse access level: %v", user.Name, err)
@@ -336,18 +335,7 @@ func (p *Provider) listApplicationDetails() ([]string, []string, []string, map[s
 	var customDomainApps []string
 	customDomainAppsWithUsers := make(map[string][]string)
 
-	list, err := p.client.Resource(appGVR).List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, nil, nil, nil
-	}
-	data, err := list.MarshalJSON()
-	if err != nil {
-		return nil, nil, nil, nil
-	}
-	var appList appv2alpha1.ApplicationList
-	if err = json.Unmarshal(data, &appList); err != nil {
-		return nil, nil, nil, nil
-	}
+	appList := p.getAppsFromCache()
 
 	getAppPrefix := func(entranceCount, index int, appid string) string {
 		if entranceCount == 1 {
@@ -356,7 +344,7 @@ func (p *Provider) listApplicationDetails() ([]string, []string, []string, map[s
 		return fmt.Sprintf("%s%d", appid, index)
 	}
 
-	for _, app := range appList.Items {
+	for _, app := range appList {
 		if len(app.Spec.Entrances) == 0 {
 			continue
 		}
@@ -404,6 +392,48 @@ func (p *Provider) listApplicationDetails() ([]string, []string, []string, map[s
 	}
 
 	return publicApps, publicCustomDomainApps, customDomainApps, customDomainAppsWithUsers
+}
+
+func (p *Provider) getAppsFromCache() []appv2alpha1.Application {
+	items := p.appStore.List()
+	apps := make([]appv2alpha1.Application, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(*unstructured.Unstructured)
+		if !ok {
+			continue
+		}
+		data, err := obj.MarshalJSON()
+		if err != nil {
+			continue
+		}
+		var app appv2alpha1.Application
+		if err = json.Unmarshal(data, &app); err != nil {
+			continue
+		}
+		apps = append(apps, app)
+	}
+	return apps
+}
+
+func (p *Provider) getUsersFromCache() []iamv1alpha2.User {
+	items := p.userStore.List()
+	users := make([]iamv1alpha2.User, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(*unstructured.Unstructured)
+		if !ok {
+			continue
+		}
+		data, err := obj.MarshalJSON()
+		if err != nil {
+			continue
+		}
+		var user iamv1alpha2.User
+		if err = json.Unmarshal(data, &user); err != nil {
+			continue
+		}
+		users = append(users, user)
+	}
+	return users
 }
 
 func getAnnotation(user *iamv1alpha2.User, key string) string {

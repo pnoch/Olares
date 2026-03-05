@@ -53,32 +53,43 @@ func (t *XdsTranslator) Start(ctx context.Context) error {
 }
 
 func (t *XdsTranslator) process(subscription <-chan watchable.Snapshot[string, *ir.Xds]) {
+	first := true
 	for snapshot := range subscription {
+		if first {
+			first = false
+			for key, val := range snapshot.State {
+				if val != nil {
+					t.handleUpdate(key, val)
+				}
+			}
+		}
 		for _, update := range snapshot.Updates {
 			if update.Delete {
 				t.xdsResources.Delete(update.Key)
 				continue
 			}
-			xdsIR := update.Value
-			if xdsIR == nil {
-				continue
+			if update.Value != nil {
+				t.handleUpdate(update.Key, update.Value)
 			}
-			listeners, clusters := t.Translate(xdsIR)
-			newSnapshot := &message.XdsSnapshot{
-				Listeners: listeners,
-				Clusters:  clusters,
-			}
-
-			if old, ok := t.xdsResources.Load(update.Key); ok && old.Equal(newSnapshot) {
-				klog.V(4).Infof("xds-translator: xDS unchanged for key %s, skipping", update.Key)
-				continue
-			}
-
-			t.xdsResources.Store(update.Key, newSnapshot)
-			klog.Infof("xds-translator: published %d listeners, %d clusters", len(listeners), len(clusters))
 		}
 	}
 	klog.Info("xds-translator: subscription closed")
+}
+
+func (t *XdsTranslator) handleUpdate(key string, xdsIR *ir.Xds) {
+	listeners, clusters := t.Translate(xdsIR)
+	newSnapshot := &message.XdsSnapshot{
+		Listeners: listeners,
+		Clusters:  clusters,
+	}
+
+	if old, ok := t.xdsResources.Load(key); ok && old.Equal(newSnapshot) {
+		klog.V(4).Infof("xds-translator: xDS unchanged for key %s, skipping", key)
+		return
+	}
+
+	t.xdsResources.Store(key, newSnapshot)
+	klog.Infof("xds-translator: published %d listeners, %d clusters", len(listeners), len(clusters))
 }
 
 func (t *XdsTranslator) Translate(xdsIR *ir.Xds) ([]cachetypes.Resource, []cachetypes.Resource) {
