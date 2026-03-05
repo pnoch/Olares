@@ -481,7 +481,7 @@ func TestTranslate_AllProtocols(t *testing.T) {
 	}
 
 	xt := &XdsTranslator{}
-	listeners, clusters := xt.translate(xdsIR)
+	listeners, clusters := xt.Translate(xdsIR)
 
 	// 4 listeners: HTTP redirect, TLS, TCP, UDP
 	require.Len(t, listeners, 4)
@@ -506,7 +506,7 @@ func TestTranslate_AllProtocols(t *testing.T) {
 
 func TestTranslate_EmptyIR(t *testing.T) {
 	xt := &XdsTranslator{}
-	listeners, clusters := xt.translate(&ir.Xds{})
+	listeners, clusters := xt.Translate(&ir.Xds{})
 
 	assert.Empty(t, listeners)
 	assert.Empty(t, clusters)

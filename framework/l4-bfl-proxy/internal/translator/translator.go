@@ -55,7 +55,7 @@ func (t *Translator) process(subscription <-chan watchable.Snapshot[string, *mes
 			if resources == nil {
 				continue
 			}
-			xds := t.translate(resources)
+			xds := t.Translate(resources)
 
 			if old, ok := t.xdsIR.Load(update.Key); ok && old.Equal(xds) {
 				klog.V(4).Infof("translator: xdsIR unchanged for key %s, skipping", update.Key)
@@ -69,7 +69,7 @@ func (t *Translator) process(subscription <-chan watchable.Snapshot[string, *mes
 	klog.Info("translator: subscription closed")
 }
 
-func (t *Translator) translate(resources *message.Resources) *ir.Xds {
+func (t *Translator) Translate(resources *message.Resources) *ir.Xds {
 	xds := &ir.Xds{}
 
 	xds.Listeners = append(xds.Listeners, t.buildHTTPRedirectListener())

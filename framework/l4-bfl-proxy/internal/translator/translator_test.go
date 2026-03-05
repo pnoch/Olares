@@ -260,7 +260,7 @@ func TestTranslate_Full(t *testing.T) {
 		},
 	}
 
-	xds := tr.translate(resources)
+	xds := tr.Translate(resources)
 
 	// Expect: HTTP redirect(81) + TLS(443) + TLS(444) + TCP stream(48126)
 	require.Len(t, xds.Listeners, 4)

@@ -63,7 +63,7 @@ func (t *XdsTranslator) process(subscription <-chan watchable.Snapshot[string, *
 			if xdsIR == nil {
 				continue
 			}
-			listeners, clusters := t.translate(xdsIR)
+			listeners, clusters := t.Translate(xdsIR)
 			newSnapshot := &message.XdsSnapshot{
 				Listeners: listeners,
 				Clusters:  clusters,
@@ -81,7 +81,7 @@ func (t *XdsTranslator) process(subscription <-chan watchable.Snapshot[string, *
 	klog.Info("xds-translator: subscription closed")
 }
 
-func (t *XdsTranslator) translate(xdsIR *ir.Xds) ([]cachetypes.Resource, []cachetypes.Resource) {
+func (t *XdsTranslator) Translate(xdsIR *ir.Xds) ([]cachetypes.Resource, []cachetypes.Resource) {
 	var listeners []cachetypes.Resource
 	var clusters []cachetypes.Resource
 	clusterSet := make(map[string]bool)
