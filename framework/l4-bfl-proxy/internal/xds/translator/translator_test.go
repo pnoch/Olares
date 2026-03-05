@@ -305,8 +305,8 @@ func TestBuildUDPListener(t *testing.T) {
 	assert.Equal(t, corev3.SocketAddress_UDP, sa.Protocol)
 	assert.NotNil(t, l.UdpListenerConfig)
 
-	require.Len(t, l.FilterChains, 1)
-	assert.Equal(t, "envoy.filters.udp_listener.udp_proxy", l.FilterChains[0].Filters[0].Name)
+	require.Len(t, l.ListenerFilters, 1)
+	assert.Equal(t, "envoy.filters.udp_listener.udp_proxy", l.ListenerFilters[0].Name)
 
 	require.Len(t, clusters, 1)
 }

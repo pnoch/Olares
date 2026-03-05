@@ -15,6 +15,7 @@ import (
 	accesslogfilev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 	proxyprotocolv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/proxy_protocol/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
+	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	udpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/udp/udp_proxy/v3"
@@ -154,6 +155,8 @@ func buildHTTPRedirectListener(listenerIR *ir.ListenerIR) *listenerv3.Listener {
 		}},
 	}
 
+	routerAny, _ := anypb.New(&routerv3.Router{})
+
 	hcm := &hcmv3.HttpConnectionManager{
 		StatPrefix: listenerIR.Name,
 		RouteSpecifier: &hcmv3.HttpConnectionManager_RouteConfig{
@@ -161,6 +164,9 @@ func buildHTTPRedirectListener(listenerIR *ir.ListenerIR) *listenerv3.Listener {
 		},
 		HttpFilters: []*hcmv3.HttpFilter{{
 			Name: wellknown.Router,
+			ConfigType: &hcmv3.HttpFilter_TypedConfig{
+				TypedConfig: routerAny,
+			},
 		}},
 	}
 
@@ -376,14 +382,11 @@ func buildUDPListener(listenerIR *ir.ListenerIR, clusterSet map[string]bool) (*l
 				},
 			},
 		},
-		FilterChains: []*listenerv3.FilterChain{{
-			Name: route.Name,
-			Filters: []*listenerv3.Filter{{
-				Name: "envoy.filters.udp_listener.udp_proxy",
-				ConfigType: &listenerv3.Filter_TypedConfig{
-					TypedConfig: udpProxyAny,
-				},
-			}},
+		ListenerFilters: []*listenerv3.ListenerFilter{{
+			Name: "envoy.filters.udp_listener.udp_proxy",
+			ConfigType: &listenerv3.ListenerFilter_TypedConfig{
+				TypedConfig: udpProxyAny,
+			},
 		}},
 		UdpListenerConfig: &listenerv3.UdpListenerConfig{},
 	}, clusters

@@ -102,7 +102,10 @@
                 },
                 "httpFilters": [
                   {
-                    "name": "envoy.filters.http.router"
+                    "name": "envoy.filters.http.router",
+                    "typedConfig": {
+                      "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                    }
                   }
                 ]
               }
@@ -230,19 +233,14 @@
           "portValue": 51820
         }
       },
-      "filterChains": [
+      "listenerFilters": [
         {
-          "filters": [
-            {
-              "name": "envoy.filters.udp_listener.udp_proxy",
-              "typedConfig": {
-                "@type": "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig",
-                "statPrefix": "direct_51820",
-                "cluster": "direct_alice_51820"
-              }
-            }
-          ],
-          "name": "direct_51820"
+          "name": "envoy.filters.udp_listener.udp_proxy",
+          "typedConfig": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig",
+            "statPrefix": "direct_51820",
+            "cluster": "direct_alice_51820"
+          }
         }
       ],
       "udpListenerConfig": {}
