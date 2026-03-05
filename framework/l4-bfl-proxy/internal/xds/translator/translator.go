@@ -168,6 +168,7 @@ func buildHTTPRedirectListener(listenerIR *ir.ListenerIR) *listenerv3.Listener {
 				TypedConfig: routerAny,
 			},
 		}},
+		InternalAddressConfig: &hcmv3.HttpConnectionManager_InternalAddressConfig{},
 	}
 
 	hcmAny, _ := anypb.New(hcm)

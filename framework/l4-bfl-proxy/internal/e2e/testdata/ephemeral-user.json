@@ -83,7 +83,8 @@
                       "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
                     }
                   }
-                ]
+                ],
+                "internalAddressConfig": {}
               }
             }
           ]

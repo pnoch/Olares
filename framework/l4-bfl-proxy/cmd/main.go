@@ -95,7 +95,7 @@ func main() {
 	}
 
 	wg.Wait()
-	klog.Info("all runners stopped")
+	klog.Info("all runners stopped...")
 }
 
 func getKubeConfig() (*rest.Config, error) {
