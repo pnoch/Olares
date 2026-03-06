@@ -38,7 +38,7 @@ type XdsServer struct {
 	xdsResources  *message.XdsResources
 	snapshotCache cache.SnapshotCache
 	cfg           *Config
-	version       uint64
+	version       atomic.Uint64
 }
 
 func New(xdsResources *message.XdsResources, cfg *Config) *XdsServer {
@@ -85,8 +85,7 @@ func (s *XdsServer) watchAndUpdate(ctx context.Context) {
 }
 
 func (s *XdsServer) updateSnapshot(ctx context.Context, xdsSnapshot *message.XdsSnapshot) error {
-	version := atomic.AddUint64(&s.version, 1)
-	versionStr := fmt.Sprintf("%d", version)
+	versionStr := fmt.Sprintf("%d", s.version.Add(1))
 
 	snap, err := cache.NewSnapshot(versionStr, map[resource.Type][]types.Resource{
 		resource.ListenerType: xdsSnapshot.Listeners,

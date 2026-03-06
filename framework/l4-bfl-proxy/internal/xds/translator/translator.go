@@ -13,9 +13,9 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	accesslogfilev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
+	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	proxyprotocolv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/proxy_protocol/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
-	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	udpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/udp/udp_proxy/v3"
@@ -30,8 +30,20 @@ import (
 	"github.com/beclab/l4-bfl-proxy/internal/ir"
 	"github.com/beclab/l4-bfl-proxy/internal/message"
 	"github.com/telepresenceio/watchable"
+	"google.golang.org/protobuf/proto"
 	"k8s.io/klog/v2"
 )
+
+// mustAny marshals a proto.Message into an anypb.Any, panicking on error.
+// All callers use well-known Envoy types whose type URLs are always registered,
+// so a failure here indicates a programming error rather than a runtime condition.
+func mustAny(m proto.Message) *anypb.Any {
+	a, err := anypb.New(m)
+	if err != nil {
+		panic(fmt.Sprintf("anypb.New(%T): %v", m, err))
+	}
+	return a
+}
 
 type XdsTranslator struct {
 	xdsIR        *message.XdsIR
@@ -155,7 +167,7 @@ func buildHTTPRedirectListener(listenerIR *ir.ListenerIR) *listenerv3.Listener {
 		}},
 	}
 
-	routerAny, _ := anypb.New(&routerv3.Router{})
+	routerAny := mustAny(&routerv3.Router{})
 
 	hcm := &hcmv3.HttpConnectionManager{
 		StatPrefix: listenerIR.Name,
@@ -171,7 +183,7 @@ func buildHTTPRedirectListener(listenerIR *ir.ListenerIR) *listenerv3.Listener {
 		InternalAddressConfig: &hcmv3.HttpConnectionManager_InternalAddressConfig{},
 	}
 
-	hcmAny, _ := anypb.New(hcm)
+	hcmAny := mustAny(hcm)
 
 	return &listenerv3.Listener{
 		Name: listenerIR.Name,
@@ -219,7 +231,7 @@ func buildTLSListener(listenerIR *ir.ListenerIR, clusterSet map[string]bool) (*l
 
 	if listenerIR.ProxyProtocol {
 		ppConfig := &proxyprotocolv3.ProxyProtocol{}
-		ppAny, _ := anypb.New(ppConfig)
+		ppAny := mustAny(ppConfig)
 		listenerFilters = append(listenerFilters, &listenerv3.ListenerFilter{
 			Name: "envoy.filters.listener.proxy_protocol",
 			ConfigType: &listenerv3.ListenerFilter_TypedConfig{
@@ -230,7 +242,7 @@ func buildTLSListener(listenerIR *ir.ListenerIR, clusterSet map[string]bool) (*l
 
 	if listenerIR.TLSInspector {
 		tlsConfig := &tlsinspectorv3.TlsInspector{}
-		tlsAny, _ := anypb.New(tlsConfig)
+		tlsAny := mustAny(tlsConfig)
 		listenerFilters = append(listenerFilters, &listenerv3.ListenerFilter{
 			Name: "envoy.filters.listener.tls_inspector",
 			ConfigType: &listenerv3.ListenerFilter_TypedConfig{
@@ -266,7 +278,7 @@ func buildFilterChain(route *ir.RouteIR, clusterName string) *listenerv3.FilterC
 		},
 		AccessLog: []*accesslogv3.AccessLog{buildAccessLog()},
 	}
-	tcpProxyAny, _ := anypb.New(tcpProxy)
+	tcpProxyAny := mustAny(tcpProxy)
 
 	fc := &listenerv3.FilterChain{
 		Name: route.Name,
@@ -319,7 +331,7 @@ func buildTCPListener(listenerIR *ir.ListenerIR, clusterSet map[string]bool) (*l
 				Cluster: clusterName,
 			},
 		}
-		tcpProxyAny, _ := anypb.New(tcpProxy)
+		tcpProxyAny := mustAny(tcpProxy)
 
 		filterChains = append(filterChains, &listenerv3.FilterChain{
 			Name: route.Name,
@@ -368,7 +380,7 @@ func buildUDPListener(listenerIR *ir.ListenerIR, clusterSet map[string]bool) (*l
 			Cluster: clusterName,
 		},
 	}
-	udpProxyAny, _ := anypb.New(udpProxy)
+	udpProxyAny := mustAny(udpProxy)
 
 	return &listenerv3.Listener{
 		Name: listenerIR.Name,
@@ -425,7 +437,7 @@ func buildCluster(dest *ir.DestinationIR, proxyProtocolUpstream bool) *clusterv3
 
 	if proxyProtocolUpstream {
 		rawBuf := &rawtransportv3.RawBuffer{}
-		rawBufAny, _ := anypb.New(rawBuf)
+		rawBufAny := mustAny(rawBuf)
 
 		ppUpstream := &ppupstreamv3.ProxyProtocolUpstreamTransport{
 			Config: &corev3.ProxyProtocolConfig{
@@ -438,7 +450,7 @@ func buildCluster(dest *ir.DestinationIR, proxyProtocolUpstream bool) *clusterv3
 				},
 			},
 		}
-		ppUpstreamAny, _ := anypb.New(ppUpstream)
+		ppUpstreamAny := mustAny(ppUpstream)
 
 		cluster.TransportSocket = &corev3.TransportSocket{
 			Name: "envoy.transport_sockets.upstream_proxy_protocol",
@@ -466,7 +478,7 @@ func buildAccessLog() *accesslogv3.AccessLog {
 			},
 		},
 	}
-	fileLogAny, _ := anypb.New(fileLog)
+	fileLogAny := mustAny(fileLog)
 	return &accesslogv3.AccessLog{
 		Name: "envoy.access_loggers.file",
 		ConfigType: &accesslogv3.AccessLog_TypedConfig{

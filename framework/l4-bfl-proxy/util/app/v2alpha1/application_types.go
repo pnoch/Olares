@@ -89,10 +89,6 @@ type ServicePort struct {
 
 	ExposePort int32 `yaml:"exposePort,omitempty" json:"exposePort,omitempty"`
 
-	// The protocol for this entrance. Supports "tcp" and "udp".
-	// Default is udp.
-	// +default="udp"
-	// +optional
 	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
 }
 

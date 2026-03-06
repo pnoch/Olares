@@ -3,6 +3,7 @@ package translator
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/beclab/l4-bfl-proxy/internal/ir"
 	"github.com/beclab/l4-bfl-proxy/internal/message"
@@ -207,7 +208,10 @@ func (t *Translator) buildStreamListeners(resources *message.Resources) []*ir.Li
 		bflHostMap[u.Name] = u.BFLHost
 	}
 
+	// seenPorts tracks "proto:port" keys to skip duplicate expose ports across apps.
+	seenPorts := make(map[string]bool)
 	var listeners []*ir.ListenerIR
+
 	for _, app := range resources.Apps {
 		for _, port := range app.Ports {
 			if port.ExposePort < 1 || port.ExposePort > 65535 {
@@ -219,13 +223,24 @@ func (t *Translator) buildStreamListeners(resources *message.Resources) []*ir.Li
 				continue
 			}
 
+			proto := strings.ToLower(port.Protocol)
+			if proto == "" {
+				proto = "tcp"
+			}
+			portKey := fmt.Sprintf("%s:%d", proto, port.ExposePort)
+			if seenPorts[portKey] {
+				klog.Warningf("translator: duplicate expose port %s for app %q, skipping", portKey, app.Name)
+				continue
+			}
+			seenPorts[portKey] = true
+
 			protocol := ir.ProtocolTCP
-			if port.Protocol == "udp" {
+			if proto == "udp" {
 				protocol = ir.ProtocolUDP
 			}
 
 			listener := &ir.ListenerIR{
-				Name:     fmt.Sprintf("stream_%s_%d", port.Protocol, port.ExposePort),
+				Name:     fmt.Sprintf("stream_%s_%d", proto, port.ExposePort),
 				Address:  "0.0.0.0",
 				Port:     uint32(port.ExposePort),
 				Protocol: protocol,

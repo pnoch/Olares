@@ -157,21 +157,17 @@ func (p *Provider) debounceLoop(ctx context.Context) {
 }
 
 func (p *Provider) publishResources(ctx context.Context) {
-	users, err := p.listUsers(ctx)
+	rawApps := p.getAppsFromCache(ctx)
+
+	users, err := p.listUsers(ctx, rawApps)
 	if err != nil {
 		klog.Errorf("provider: list users: %v", err)
 		return
 	}
 
-	apps, err := p.listApps(ctx)
-	if err != nil {
-		klog.Errorf("provider: list apps: %v", err)
-		return
-	}
-
 	snapshot := &message.Resources{
 		Users: users,
-		Apps:  apps,
+		Apps:  p.buildAppInfos(rawApps),
 	}
 	snapshot.Sort()
 
@@ -181,12 +177,10 @@ func (p *Provider) publishResources(ctx context.Context) {
 	}
 
 	p.resources.Store(mapKey, snapshot)
-	klog.Infof("provider: published snapshot with %d users and %d apps", len(users), len(apps))
+	klog.Infof("provider: published snapshot with %d users and %d apps", len(snapshot.Users), len(snapshot.Apps))
 }
 
-func (p *Provider) listApps(ctx context.Context) ([]*message.AppInfo, error) {
-	appList := p.getAppsFromCache(ctx)
-
+func (p *Provider) buildAppInfos(appList []appv2alpha1.Application) []*message.AppInfo {
 	var result []*message.AppInfo
 	for _, app := range appList {
 		entrances := make([]message.EntranceInfo, 0, len(app.Spec.Entrances))
@@ -216,11 +210,11 @@ func (p *Provider) listApps(ctx context.Context) ([]*message.AppInfo, error) {
 			Ports:     ports,
 		})
 	}
-	return result, nil
+	return result
 }
 
-func (p *Provider) listUsers(ctx context.Context) ([]*message.UserInfo, error) {
-	publicAppIDs, publicCustomDomainApps, _, customDomainAppsWithUsers := p.listApplicationDetails(ctx)
+func (p *Provider) listUsers(ctx context.Context, rawApps []appv2alpha1.Application) ([]*message.UserInfo, error) {
+	publicAppIDs, publicCustomDomainApps, _, customDomainAppsWithUsers := p.listApplicationDetails(rawApps)
 
 	userList := p.getUsersFromCache(ctx)
 
@@ -248,11 +242,7 @@ func (p *Provider) listUsers(ctx context.Context) ([]*message.UserInfo, error) {
 		return r
 	}
 
-	type userSortable struct {
-		info      *message.UserInfo
-		timestamp int64
-	}
-	var sortable []userSortable
+	var result []*message.UserInfo
 
 	for _, user := range userList {
 		isEphemeralAnno := getAnnotation(&user, userAnnotationIsEphemeral)
@@ -340,27 +330,17 @@ func (p *Provider) listUsers(ctx context.Context) ([]*message.UserInfo, error) {
 			LocalDomainIP:     localDomainIP,
 			CreateTimestamp:   user.CreationTimestamp.Unix(),
 		}
-		sortable = append(sortable, userSortable{info: info, timestamp: user.CreationTimestamp.Unix()})
+		result = append(result, info)
 	}
 
-	// sort.Slice(sortable, func(i, j int) bool {
-	// 	return sortable[i].timestamp > sortable[j].timestamp
-	// })
-
-	result := make([]*message.UserInfo, 0, len(sortable))
-	for _, s := range sortable {
-		result = append(result, s.info)
-	}
 	return result, nil
 }
 
-func (p *Provider) listApplicationDetails(ctx context.Context) ([]string, []string, []string, map[string][]string) {
+func (p *Provider) listApplicationDetails(appList []appv2alpha1.Application) ([]string, []string, []string, map[string][]string) {
 	publicApps := []string{"headscale"}
 	var publicCustomDomainApps []string
 	var customDomainApps []string
 	customDomainAppsWithUsers := make(map[string][]string)
-
-	appList := p.getAppsFromCache(ctx)
 
 	getAppPrefix := func(entranceCount, index int, appid string) string {
 		if entranceCount == 1 {
