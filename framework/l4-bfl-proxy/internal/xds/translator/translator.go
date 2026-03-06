@@ -476,9 +476,9 @@ func buildAccessLog() *accesslogv3.AccessLog {
 }
 
 func parseCIDR(cidr string) (*corev3.CidrRange, error) {
-	ip, ipNet, err := net.ParseCIDR(cidr)
+	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		ip = net.ParseIP(cidr)
+		ip := net.ParseIP(cidr)
 		if ip == nil {
 			return nil, fmt.Errorf("invalid CIDR %q", cidr)
 		}
@@ -489,7 +489,7 @@ func parseCIDR(cidr string) (*corev3.CidrRange, error) {
 	}
 	ones, _ := ipNet.Mask.Size()
 	return &corev3.CidrRange{
-		AddressPrefix: ip.String(),
+		AddressPrefix: ipNet.IP.String(),
 		PrefixLen:     wrapperspb.UInt32(uint32(ones)),
 	}, nil
 }

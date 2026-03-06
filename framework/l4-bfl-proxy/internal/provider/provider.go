@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"sort"
@@ -13,18 +14,13 @@ import (
 	iamv1alpha2 "github.com/beclab/api/iam/v1alpha2"
 	"github.com/beclab/l4-bfl-proxy/internal/message"
 	appv2alpha1 "github.com/beclab/l4-bfl-proxy/util/app/v2alpha1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/json"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 )
 
 const (
 	mapKey          = "default"
-	resyncPeriod    = 10 * time.Minute
 	dnsLookupRetry  = 15
 	dnsRetryBackoff = 3 * time.Second
 )
@@ -47,17 +43,6 @@ var (
 	settingsCustomDomainThirdPartyDomain = "third_party_domain"
 
 	applicationAuthLevelPublic = "public"
-
-	iamUserGVR = schema.GroupVersionResource{
-		Group:    "iam.kubesphere.io",
-		Version:  "v1alpha2",
-		Resource: "users",
-	}
-	appGVR = schema.GroupVersionResource{
-		Group:    "app.bytetrade.io",
-		Version:  "v1alpha1",
-		Resource: "applications",
-	}
 )
 
 type Config struct {
@@ -68,18 +53,16 @@ type Config struct {
 }
 
 type Provider struct {
-	client      dynamic.Interface
-	resources   *message.ProviderResources
-	cfg         *Config
-	userStore   cache.Store
-	appStore    cache.Store
-	synced      atomic.Bool
-	debounceCh  chan struct{}
+	cache      ctrlcache.Cache
+	resources  *message.ProviderResources
+	cfg        *Config
+	synced     atomic.Bool
+	debounceCh chan struct{}
 }
 
-func New(client dynamic.Interface, resources *message.ProviderResources, cfg *Config) *Provider {
+func New(c ctrlcache.Cache, resources *message.ProviderResources, cfg *Config) *Provider {
 	return &Provider{
-		client:     client,
+		cache:      c,
 		resources:  resources,
 		cfg:        cfg,
 		debounceCh: make(chan struct{}, 1),
@@ -88,15 +71,20 @@ func New(client dynamic.Interface, resources *message.ProviderResources, cfg *Co
 
 func (p *Provider) Name() string { return "provider" }
 
-func (p *Provider) Start(ctx context.Context) error {
-	klog.Info("provider: starting dynamic informers...")
+// SetupWithManager pre-registers informers and event handlers before the
+// Manager starts. This ensures the cache includes User and Application
+// informers in its initial sync, so cacheReadyCheck is accurate.
+// Must be called before mgr.Start().
+func (p *Provider) SetupWithManager(ctx context.Context) error {
+	userInformer, err := p.cache.GetInformer(ctx, &iamv1alpha2.User{})
+	if err != nil {
+		return fmt.Errorf("get user informer: %w", err)
+	}
 
-	factory := dynamicinformer.NewDynamicSharedInformerFactory(p.client, resyncPeriod)
-	userInformer := factory.ForResource(iamUserGVR).Informer()
-	appInformer := factory.ForResource(appGVR).Informer()
-
-	p.userStore = userInformer.GetStore()
-	p.appStore = appInformer.GetStore()
+	appInformer, err := p.cache.GetInformer(ctx, &appv2alpha1.Application{})
+	if err != nil {
+		return fmt.Errorf("get app informer: %w", err)
+	}
 
 	handler := cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(_ interface{}) { p.notifyChanged() },
@@ -104,18 +92,22 @@ func (p *Provider) Start(ctx context.Context) error {
 		DeleteFunc: func(_ interface{}) { p.notifyChanged() },
 	}
 	if _, err := userInformer.AddEventHandler(handler); err != nil {
-		return fmt.Errorf("add user event handler: %w", err)
+		return fmt.Errorf("add user event handler failed: %w", err)
 	}
 	if _, err := appInformer.AddEventHandler(handler); err != nil {
-		return fmt.Errorf("add app event handler: %w", err)
+		return fmt.Errorf("add app event handler failed: %w", err)
 	}
 
-	factory.Start(ctx.Done())
-	factory.WaitForCacheSync(ctx.Done())
+	klog.Info("provider: informers and event handlers registered")
+	return nil
+}
 
+// Start is called by the Manager after the cache has synced.
+// Informers are already registered and synced via SetupWithManager.
+func (p *Provider) Start(ctx context.Context) error {
 	p.synced.Store(true)
-	klog.Info("provider: informer caches synced, publishing initial snapshot")
-	p.publishResources()
+	klog.Info("provider: cache synced, publishing initial snapshot")
+	p.publishResources(ctx)
 
 	p.debounceLoop(ctx)
 	klog.Info("provider: stopped")
@@ -140,7 +132,6 @@ func (p *Provider) debounceLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-p.debounceCh:
-			// Drain any queued signals and wait for a quiet period
 			timer := time.NewTimer(debounceInterval)
 		drain:
 			for {
@@ -154,19 +145,19 @@ func (p *Provider) debounceLoop(ctx context.Context) {
 					return
 				}
 			}
-			p.publishResources()
+			p.publishResources(ctx)
 		}
 	}
 }
 
-func (p *Provider) publishResources() {
-	users, err := p.listUsers()
+func (p *Provider) publishResources(ctx context.Context) {
+	users, err := p.listUsers(ctx)
 	if err != nil {
 		klog.Errorf("provider: list users: %v", err)
 		return
 	}
 
-	apps, err := p.listApps()
+	apps, err := p.listApps(ctx)
 	if err != nil {
 		klog.Errorf("provider: list apps: %v", err)
 		return
@@ -187,9 +178,8 @@ func (p *Provider) publishResources() {
 	klog.Infof("provider: published snapshot with %d users and %d apps", len(users), len(apps))
 }
 
-// listApps reads applications from the informer cache and builds AppInfo slice.
-func (p *Provider) listApps() ([]*message.AppInfo, error) {
-	appList := p.getAppsFromCache()
+func (p *Provider) listApps(ctx context.Context) ([]*message.AppInfo, error) {
+	appList := p.getAppsFromCache(ctx)
 
 	var result []*message.AppInfo
 	for _, app := range appList {
@@ -223,11 +213,10 @@ func (p *Provider) listApps() ([]*message.AppInfo, error) {
 	return result, nil
 }
 
-// listUsers reads users from the informer cache, parses annotations, resolves BFL host, builds UserInfo slice.
-func (p *Provider) listUsers() ([]*message.UserInfo, error) {
-	publicAppIDs, publicCustomDomainApps, _, customDomainAppsWithUsers := p.listApplicationDetails()
+func (p *Provider) listUsers(ctx context.Context) ([]*message.UserInfo, error) {
+	publicAppIDs, publicCustomDomainApps, _, customDomainAppsWithUsers := p.listApplicationDetails(ctx)
 
-	userList := p.getUsersFromCache()
+	userList := p.getUsersFromCache(ctx)
 
 	getUserByName := func(name string) *iamv1alpha2.User {
 		for i := range userList {
@@ -359,15 +348,13 @@ func (p *Provider) listUsers() ([]*message.UserInfo, error) {
 	return result, nil
 }
 
-// listApplicationDetails mirrors the original listApplications, returning public app IDs,
-// public custom domain apps, all custom domain apps, and per-user custom domain mapping.
-func (p *Provider) listApplicationDetails() ([]string, []string, []string, map[string][]string) {
+func (p *Provider) listApplicationDetails(ctx context.Context) ([]string, []string, []string, map[string][]string) {
 	publicApps := []string{"headscale"}
 	var publicCustomDomainApps []string
 	var customDomainApps []string
 	customDomainAppsWithUsers := make(map[string][]string)
 
-	appList := p.getAppsFromCache()
+	appList := p.getAppsFromCache(ctx)
 
 	getAppPrefix := func(entranceCount, index int, appid string) string {
 		if entranceCount == 1 {
@@ -426,48 +413,26 @@ func (p *Provider) listApplicationDetails() ([]string, []string, []string, map[s
 	return publicApps, publicCustomDomainApps, customDomainApps, customDomainAppsWithUsers
 }
 
-func (p *Provider) getAppsFromCache() []appv2alpha1.Application {
-	items := p.appStore.List()
-	apps := make([]appv2alpha1.Application, 0, len(items))
-	for _, item := range items {
-		obj, ok := item.(*unstructured.Unstructured)
-		if !ok {
-			continue
-		}
-		data, err := obj.MarshalJSON()
-		if err != nil {
-			continue
-		}
-		var app appv2alpha1.Application
-		if err = json.Unmarshal(data, &app); err != nil {
-			continue
-		}
-		apps = append(apps, app)
+func (p *Provider) getAppsFromCache(ctx context.Context) []appv2alpha1.Application {
+	var appList appv2alpha1.ApplicationList
+	if err := p.cache.List(ctx, &appList); err != nil {
+		klog.Errorf("provider: list apps from cache: %v", err)
+		return nil
 	}
+	apps := appList.Items
 	sort.Slice(apps, func(i, j int) bool {
 		return apps[i].Spec.Name < apps[j].Spec.Name
 	})
 	return apps
 }
 
-func (p *Provider) getUsersFromCache() []iamv1alpha2.User {
-	items := p.userStore.List()
-	users := make([]iamv1alpha2.User, 0, len(items))
-	for _, item := range items {
-		obj, ok := item.(*unstructured.Unstructured)
-		if !ok {
-			continue
-		}
-		data, err := obj.MarshalJSON()
-		if err != nil {
-			continue
-		}
-		var user iamv1alpha2.User
-		if err = json.Unmarshal(data, &user); err != nil {
-			continue
-		}
-		users = append(users, user)
+func (p *Provider) getUsersFromCache(ctx context.Context) []iamv1alpha2.User {
+	var userList iamv1alpha2.UserList
+	if err := p.cache.List(ctx, &userList); err != nil {
+		klog.Errorf("provider: list users from cache: %v", err)
+		return nil
 	}
+	users := userList.Items
 	sort.Slice(users, func(i, j int) bool {
 		return users[i].Name < users[j].Name
 	})
