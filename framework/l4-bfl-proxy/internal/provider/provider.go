@@ -137,6 +137,12 @@ func (p *Provider) debounceLoop(ctx context.Context) {
 			for {
 				select {
 				case <-p.debounceCh:
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
 					timer.Reset(debounceInterval)
 				case <-timer.C:
 					break drain
@@ -337,9 +343,9 @@ func (p *Provider) listUsers(ctx context.Context) ([]*message.UserInfo, error) {
 		sortable = append(sortable, userSortable{info: info, timestamp: user.CreationTimestamp.Unix()})
 	}
 
-	sort.Slice(sortable, func(i, j int) bool {
-		return sortable[i].timestamp > sortable[j].timestamp
-	})
+	// sort.Slice(sortable, func(i, j int) bool {
+	// 	return sortable[i].timestamp > sortable[j].timestamp
+	// })
 
 	result := make([]*message.UserInfo, 0, len(sortable))
 	for _, s := range sortable {
