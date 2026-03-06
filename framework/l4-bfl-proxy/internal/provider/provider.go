@@ -21,7 +21,6 @@ import (
 
 const (
 	mapKey          = "default"
-	dnsLookupRetry  = 15
 	dnsRetryBackoff = 3 * time.Second
 )
 
@@ -159,10 +158,16 @@ func (p *Provider) debounceLoop(ctx context.Context) {
 func (p *Provider) publishResources(ctx context.Context) {
 	rawApps := p.getAppsFromCache(ctx)
 
-	users, err := p.listUsers(ctx, rawApps)
+	users, dnsFailures, err := p.listUsers(ctx, rawApps)
 	if err != nil {
 		klog.Errorf("provider: list users: %v", err)
 		return
+	}
+
+	// When DNS fails for some users, merge stale data from the previous
+	// snapshot so those users' filter chains are not removed from Envoy.
+	if dnsFailures > 0 {
+		users = p.mergeStaleUsers(users)
 	}
 
 	snapshot := &message.Resources{
@@ -173,11 +178,43 @@ func (p *Provider) publishResources(ctx context.Context) {
 
 	if old, ok := p.resources.Load(mapKey); ok && old.Equal(snapshot) {
 		klog.V(4).Info("provider: snapshot unchanged, skipping publish")
-		return
+	} else {
+		p.resources.Store(mapKey, snapshot)
+		klog.Infof("provider: published snapshot with %d users and %d apps", len(snapshot.Users), len(snapshot.Apps))
 	}
 
-	p.resources.Store(mapKey, snapshot)
-	klog.Infof("provider: published snapshot with %d users and %d apps", len(snapshot.Users), len(snapshot.Apps))
+	if dnsFailures > 0 {
+		klog.V(2).Infof("provider: %d user(s) pending DNS resolution, retrying in %s", dnsFailures, dnsRetryBackoff)
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-time.After(dnsRetryBackoff):
+				p.notifyChanged()
+			}
+		}()
+	}
+}
+
+// mergeStaleUsers fills in users whose DNS resolution failed with their data
+// from the previous snapshot, preventing Envoy from removing their filter chains.
+func (p *Provider) mergeStaleUsers(current []*message.UserInfo) []*message.UserInfo {
+	old, ok := p.resources.Load(mapKey)
+	if !ok || old == nil {
+		return current
+	}
+
+	present := make(map[string]bool, len(current))
+	for _, u := range current {
+		present[u.Name] = true
+	}
+
+	for _, stale := range old.Users {
+		if !present[stale.Name] {
+			klog.V(2).Infof("provider: retaining stale data for user %q (DNS pending)", stale.Name)
+			current = append(current, stale)
+		}
+	}
+	return current
 }
 
 func (p *Provider) buildAppInfos(appList []appv2alpha1.Application) []*message.AppInfo {
@@ -213,7 +250,7 @@ func (p *Provider) buildAppInfos(appList []appv2alpha1.Application) []*message.A
 	return result
 }
 
-func (p *Provider) listUsers(ctx context.Context, rawApps []appv2alpha1.Application) ([]*message.UserInfo, error) {
+func (p *Provider) listUsers(ctx context.Context, rawApps []appv2alpha1.Application) ([]*message.UserInfo, int, error) {
 	publicAppIDs, publicCustomDomainApps, _, customDomainAppsWithUsers := p.listApplicationDetails(rawApps)
 
 	userList := p.getUsersFromCache(ctx)
@@ -243,6 +280,7 @@ func (p *Provider) listUsers(ctx context.Context, rawApps []appv2alpha1.Applicat
 	}
 
 	var result []*message.UserInfo
+	var dnsFailures int
 
 	for _, user := range userList {
 		isEphemeralAnno := getAnnotation(&user, userAnnotationIsEphemeral)
@@ -305,7 +343,8 @@ func (p *Provider) listUsers(ctx context.Context, rawApps []appv2alpha1.Applicat
 		svcName := fmt.Sprintf("bfl.%s-%s", p.cfg.UserNamespacePrefix, user.Name)
 		addr, err := lookupHostAddr(svcName)
 		if err != nil {
-			klog.V(2).Infof("provider: user %q lookup host: %v", user.Name, err)
+			klog.V(2).Infof("provider: user %q lookup host: %v, will retry", user.Name, err)
+			dnsFailures++
 			continue
 		}
 
@@ -333,7 +372,7 @@ func (p *Provider) listUsers(ctx context.Context, rawApps []appv2alpha1.Applicat
 		result = append(result, info)
 	}
 
-	return result, nil
+	return result, dnsFailures, nil
 }
 
 func (p *Provider) listApplicationDetails(appList []appv2alpha1.Application) ([]string, []string, []string, map[string][]string) {
@@ -358,10 +397,10 @@ func (p *Provider) listApplicationDetails(appList []appv2alpha1.Application) ([]
 		var customDomainsPrefix []string
 		entranceCount := len(app.Spec.Entrances)
 		owner := app.Spec.Owner
+		customDomainEntrancesMap := getSettingsKeyMap(&app, settingsCustomDomain)
 
 		for index, entrance := range app.Spec.Entrances {
 			prefix := getAppPrefix(entranceCount, index, app.Spec.Appid)
-			customDomainEntrancesMap := getSettingsKeyMap(&app, settingsCustomDomain)
 			authLevel := entrance.AuthLevel
 
 			if cdEntrance, ok := customDomainEntrancesMap[entrance.Name]; ok {
@@ -382,18 +421,13 @@ func (p *Provider) listApplicationDetails(appList []appv2alpha1.Application) ([]
 				}
 			}
 
-			if prefix != "" {
-				if authLevel == applicationAuthLevelPublic {
-					publicApps = append(publicApps, prefix)
-				}
-				if len(customDomainsPrefix) > 0 {
-					publicApps = append(publicApps, customDomainsPrefix...)
-				}
-				if len(customDomains) > 0 {
-					publicCustomDomainApps = append(publicCustomDomainApps, customDomains...)
-				}
+			if authLevel == applicationAuthLevelPublic {
+				publicApps = append(publicApps, prefix)
 			}
 		}
+
+		publicApps = append(publicApps, customDomainsPrefix...)
+		publicCustomDomainApps = append(publicCustomDomainApps, customDomains...)
 	}
 
 	return publicApps, publicCustomDomainApps, customDomainApps, customDomainAppsWithUsers
@@ -450,16 +484,12 @@ func getSettingsKeyMap(app *appv2alpha1.Application, key string) map[string]map[
 }
 
 func lookupHostAddr(svc string) (string, error) {
-	for i := 0; i < dnsLookupRetry; i++ {
-		addrs, err := net.LookupHost(svc)
-		if err != nil {
-			klog.V(4).Infof("lookup %s: %v", svc, err)
-			time.Sleep(dnsRetryBackoff)
-			continue
-		}
-		if len(addrs) >= 1 {
-			return addrs[0], nil
-		}
+	addrs, err := net.LookupHost(svc)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("svc %s: no host resolved", svc)
+	if len(addrs) == 0 {
+		return "", fmt.Errorf("svc %s: no address resolved", svc)
+	}
+	return addrs[0], nil
 }
