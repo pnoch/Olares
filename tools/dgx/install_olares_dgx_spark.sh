@@ -4,7 +4,10 @@ set -euo pipefail
 VERSION="${VERSION:-1.12.4}"
 CLI_PATH="${CLI_PATH:-/tmp/olares-cli}"
 REMOVE_DOCKER="${REMOVE_DOCKER:-true}"
-DISABLE_HAMI_DEVICE_PLUGIN="${DISABLE_HAMI_DEVICE_PLUGIN:-true}"
+ENABLE_HAMI_GB10_FIX="${ENABLE_HAMI_GB10_FIX:-true}"
+HAMI_PRECONFIGURED_DEVICE_MEMORY_MB="${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB:-131072}"
+# If empty, script keeps the current image and only patches device config.
+HAMI_IMAGE="${HAMI_IMAGE:-}"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -74,15 +77,65 @@ EOF
   "${CLI_PATH}" install -v "${VERSION}"
 }
 
-disable_hami_device_plugin_if_requested() {
-  if [[ "${DISABLE_HAMI_DEVICE_PLUGIN}" != "true" ]]; then
-    log "Skipping HAMi device-plugin disable (DISABLE_HAMI_DEVICE_PLUGIN=${DISABLE_HAMI_DEVICE_PLUGIN})."
+apply_hami_gb10_fix_if_requested() {
+  local cm tmp_cm
+
+  if [[ "${ENABLE_HAMI_GB10_FIX}" != "true" ]]; then
+    log "Skipping HAMi GB10 fix (ENABLE_HAMI_GB10_FIX=${ENABLE_HAMI_GB10_FIX})."
     return
   fi
 
-  log "Disabling HAMi device-plugin scheduling (workaround for GB10/NVML unsupported memory query)..."
-  k3s kubectl patch daemonset hami-device-plugin -n kube-system --type=merge \
-    -p '{"spec":{"template":{"spec":{"nodeSelector":{"hami-disabled":"true"}}}}}' || true
+  cm="hami-scheduler-device"
+  tmp_cm="$(mktemp)"
+
+  log "Applying HAMi GB10 fix (preConfiguredDeviceMemory=${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB}MB)..."
+
+  # Ensure old disable workaround does not block scheduling.
+  k3s kubectl patch daemonset hami-device-plugin -n kube-system --type=json \
+    -p='[{"op":"remove","path":"/spec/template/spec/nodeSelector/hami-disabled"}]' || true
+
+  # Patch hami scheduler device config with preConfiguredDeviceMemory fallback.
+  if k3s kubectl get configmap "${cm}" -n kube-system >/dev/null 2>&1; then
+    k3s kubectl get configmap "${cm}" -n kube-system \
+      -o jsonpath='{.data.device-config\.yaml}' > "${tmp_cm}"
+
+    if grep -q 'preConfiguredDeviceMemory:' "${tmp_cm}"; then
+      sed -i -E \
+        "s/(preConfiguredDeviceMemory:[[:space:]]*)[0-9]+/\1${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB}/" \
+        "${tmp_cm}"
+    else
+      awk -v v="${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB}" '
+        /defaultGPUNum:/ && !done { print; print "      preConfiguredDeviceMemory: " v; done=1; next }
+        { print }
+      ' "${tmp_cm}" > "${tmp_cm}.new"
+      mv "${tmp_cm}.new" "${tmp_cm}"
+    fi
+
+    k3s kubectl create configmap "${cm}" -n kube-system \
+      --from-file=device-config.yaml="${tmp_cm}" \
+      --dry-run=client -o yaml | k3s kubectl apply -f -
+  else
+    log "ConfigMap kube-system/${cm} not found; skipping preConfiguredDeviceMemory patch."
+  fi
+
+  if [[ -n "${HAMI_IMAGE}" ]]; then
+    log "Setting HAMi daemonset image to ${HAMI_IMAGE} ..."
+    k3s kubectl set image daemonset/hami-device-plugin -n kube-system \
+      device-plugin="${HAMI_IMAGE}" \
+      vgpu-monitor="${HAMI_IMAGE}"
+  fi
+
+  log "Restarting HAMi device plugin daemonset..."
+  k3s kubectl rollout restart daemonset/hami-device-plugin -n kube-system
+  k3s kubectl rollout status daemonset/hami-device-plugin -n kube-system --timeout=180s
+
+  log "HAMi device plugin pods:"
+  k3s kubectl get pods -n kube-system -l app.kubernetes.io/component=hami-device-plugin -o wide || true
+
+  log "Node allocatable GPU after patch:"
+  k3s kubectl get node "$(hostname -s)" -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}' || true
+
+  rm -f "${tmp_cm}"
 }
 
 print_generated_account_info() {
@@ -134,12 +187,13 @@ main() {
 
   log "Starting DGX Spark Olares bootstrap"
   log "VERSION=${VERSION} CLI_PATH=${CLI_PATH}"
-  log "REMOVE_DOCKER=${REMOVE_DOCKER} DISABLE_HAMI_DEVICE_PLUGIN=${DISABLE_HAMI_DEVICE_PLUGIN}"
+  log "REMOVE_DOCKER=${REMOVE_DOCKER} ENABLE_HAMI_GB10_FIX=${ENABLE_HAMI_GB10_FIX}"
+  log "HAMI_PRECONFIGURED_DEVICE_MEMORY_MB=${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB} HAMI_IMAGE=${HAMI_IMAGE:-<keep-current>}"
 
   prepare_system_packages
   remove_conflicting_runtimes
   run_install_flow
-  disable_hami_device_plugin_if_requested
+  apply_hami_gb10_fix_if_requested
   print_post_install_status
 }
 

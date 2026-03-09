@@ -26,7 +26,10 @@ Default behavior:
   - `download component`
   - `download check`
   - `install`
-- Applies a post-install workaround by disabling `hami-device-plugin` scheduling (to avoid GB10 NVML incompatibility crash loops).
+- Applies a post-install HAMi fix for GB10 unified-memory GPUs:
+  - Sets `preConfiguredDeviceMemory` in `hami-scheduler-device` (default `131072` MB).
+  - Restarts `hami-device-plugin`.
+  - Optionally swaps HAMi image if `HAMI_IMAGE` is set.
 
 ## Environment variables
 
@@ -36,14 +39,23 @@ You can customize behavior:
 sudo VERSION=1.12.4 \
   CLI_PATH=/tmp/olares-cli \
   REMOVE_DOCKER=true \
-  DISABLE_HAMI_DEVICE_PLUGIN=true \
+  ENABLE_HAMI_GB10_FIX=true \
+  HAMI_PRECONFIGURED_DEVICE_MEMORY_MB=131072 \
+  HAMI_IMAGE=projecthami/hami:<tag-with-pr-1637> \
   bash tools/dgx/install_olares_dgx_spark.sh
 ```
 
 - `VERSION`: Olares version to install.
 - `CLI_PATH`: Path to executable `olares-cli`.
 - `REMOVE_DOCKER`: `true` or `false`.
-- `DISABLE_HAMI_DEVICE_PLUGIN`: `true` or `false`.
+- `ENABLE_HAMI_GB10_FIX`: `true` or `false`.
+- `HAMI_PRECONFIGURED_DEVICE_MEMORY_MB`: fallback GPU memory for unified-memory GPUs (GB10 default `131072`).
+- `HAMI_IMAGE`: optional full image reference for HAMi daemonset. Leave empty to keep current image.
+
+## Notes for GB10
+
+- PR `Project-HAMi/HAMi#1637` is required to avoid `nvml get memory error ret=Not Supported` panic.
+- If your bundled HAMi image does not include that PR, set `HAMI_IMAGE` to a fixed build that includes it.
 
 ## Interactive step
 
