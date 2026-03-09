@@ -34,11 +34,11 @@ cd build/Linux/Arm64/Release/dist
 shopt -s nullglob
 declare -a files
 files=(*.whl)
-if [[ ${#files[@]} -eq 0 ]]; then
+if [[ \${#files[@]} -eq 0 ]]; then
   printf '[%s] no wheel found: build/Linux/Arm64/Release/dist/*.whl\\n' \"$(date '+%Y-%m-%d %H:%M:%S')\"
   exit 1
 fi
-WHEEL=$(realpath \"${files[0]}\")
+WHEEL=$(realpath \"\${files[0]}\")
 python3 -m pip install --target=/app/backend/pipx --break-system-packages "${WHEEL}"
 " 
 log "Build complete. Uploaded wheel to /app/backend/pipx"
