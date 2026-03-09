@@ -4,7 +4,8 @@ set -euo pipefail
 # GPU app profile switcher for single-GPU DGX Spark Olares nodes.
 # - "ollama":   full GPU to Ollama, ComfyUI scaled down.
 # - "comfyui":  full GPU to ComfyUI, Ollama scaled down.
-# - "shared":   best-effort 50/50 split for both apps (depends on HAMi behavior).
+# - "shared":   balanced 50/50 split for both apps.
+# - "best-effort": both apps set to 100% (aggressive; may be unstable under contention).
 # - "auto":     infer profile from deployment replica intents.
 
 PROFILE="${1:-}"
@@ -17,7 +18,8 @@ Usage:
 Profiles:
   ollama   - full GPU to Ollama only
   comfyui  - full GPU to ComfyUI only
-  shared   - best-effort 50/50 GPU memory split for both
+  shared   - balanced 50/50 GPU memory split for both
+  best-effort - both apps use 100% GPU memory limit
   auto     - infer from current deployment replicas
 EOF
   exit 1
@@ -112,7 +114,7 @@ resolve_auto_profile() {
   comfy_replicas="$(get_replicas "${COMFY_NS}" "${COMFY_DEPLOY}")"
 
   if [[ "${ollama_replicas}" -gt 0 && "${comfy_replicas}" -gt 0 ]]; then
-    echo "shared"
+    echo "best-effort"
     return
   fi
 
@@ -160,7 +162,7 @@ case "${PROFILE}" in
     wait_and_show_status "${COMFY_NS}" "${COMFY_DEPLOY}"
     ;;
   shared)
-    log "Applying profile: shared (best-effort 50/50)"
+    log "Applying profile: shared (balanced 50/50)"
     set_hami_mode_shared
     patch_gpu_mem_percent "${OLLAMA_NS}" "${OLLAMA_DEPLOY}" "ollama" "50"
     patch_gpu_mem_percent "${COMFY_NS}" "${COMFY_DEPLOY}" "comfyui" "50"
@@ -170,8 +172,19 @@ case "${PROFILE}" in
     wait_and_show_status "${OLLAMA_NS}" "${OLLAMA_DEPLOY}"
     wait_and_show_status "${COMFY_NS}" "${COMFY_DEPLOY}"
     ;;
+  best-effort)
+    log "Applying profile: best-effort (100/100, contention allowed)"
+    set_hami_mode_shared
+    patch_gpu_mem_percent "${OLLAMA_NS}" "${OLLAMA_DEPLOY}" "ollama" "100"
+    patch_gpu_mem_percent "${COMFY_NS}" "${COMFY_DEPLOY}" "comfyui" "100"
+    clear_gpu_bindings
+    ${K3S} -n "${OLLAMA_NS}" scale deployment "${OLLAMA_DEPLOY}" --replicas=1
+    ${K3S} -n "${COMFY_NS}" scale deployment "${COMFY_DEPLOY}" --replicas=1
+    wait_and_show_status "${OLLAMA_NS}" "${OLLAMA_DEPLOY}"
+    wait_and_show_status "${COMFY_NS}" "${COMFY_DEPLOY}"
+    ;;
   *)
-    echo "error: unsupported profile '${PROFILE}'. Use: ollama | comfyui | shared"
+    echo "error: unsupported profile '${PROFILE}'. Use: ollama | comfyui | shared | best-effort"
     exit 1
     ;;
 esac
