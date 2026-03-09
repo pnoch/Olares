@@ -95,6 +95,7 @@ For DGX Spark nodes with one GPU, use this helper to switch app GPU profiles:
 sudo bash tools/dgx/switch_gpu_app_profile.sh ollama
 sudo bash tools/dgx/switch_gpu_app_profile.sh comfyui
 sudo bash tools/dgx/switch_gpu_app_profile.sh shared
+sudo bash tools/dgx/switch_gpu_app_profile.sh auto
 ```
 
 Profiles:
@@ -102,5 +103,10 @@ Profiles:
 - `ollama`: full GPU to Ollama (`100%`), ComfyUI scaled down.
 - `comfyui`: full GPU to ComfyUI (`100%`), Ollama scaled down.
 - `shared`: best-effort `50/50` split (depends on HAMi behavior in your cluster).
+- `auto`: infers mode from deployment replicas:
+  - both replicas > 0 -> `shared`
+  - only `ollama` replicas > 0 -> `ollama`
+  - only `comfyuishare` replicas > 0 -> `comfyui`
+  - both replicas = 0 -> no-op
 
 The script also clears stale `GPUBinding` resources to avoid stuck `Pending` pods after profile switches.

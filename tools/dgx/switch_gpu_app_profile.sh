@@ -5,6 +5,7 @@ set -euo pipefail
 # - "ollama":   full GPU to Ollama, ComfyUI scaled down.
 # - "comfyui":  full GPU to ComfyUI, Ollama scaled down.
 # - "shared":   best-effort 50/50 split for both apps (depends on HAMi behavior).
+# - "auto":     infer profile from deployment replica intents.
 
 PROFILE="${1:-}"
 
@@ -17,6 +18,7 @@ Profiles:
   ollama   - full GPU to Ollama only
   comfyui  - full GPU to ComfyUI only
   shared   - best-effort 50/50 GPU memory split for both
+  auto     - infer from current deployment replicas
 EOF
   exit 1
 fi
@@ -98,7 +100,49 @@ wait_and_show_status() {
   ${K3S} get gpubinding.gpu.bytetrade.io -A -o wide || true
 }
 
+get_replicas() {
+  local ns="$1"
+  local deploy="$2"
+  ${K3S} -n "${ns}" get deployment "${deploy}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0"
+}
+
+resolve_auto_profile() {
+  local ollama_replicas comfy_replicas
+  ollama_replicas="$(get_replicas "${OLLAMA_NS}" "${OLLAMA_DEPLOY}")"
+  comfy_replicas="$(get_replicas "${COMFY_NS}" "${COMFY_DEPLOY}")"
+
+  if [[ "${ollama_replicas}" -gt 0 && "${comfy_replicas}" -gt 0 ]]; then
+    echo "shared"
+    return
+  fi
+
+  if [[ "${ollama_replicas}" -gt 0 && "${comfy_replicas}" -eq 0 ]]; then
+    echo "ollama"
+    return
+  fi
+
+  if [[ "${ollama_replicas}" -eq 0 && "${comfy_replicas}" -gt 0 ]]; then
+    echo "comfyui"
+    return
+  fi
+
+  # If both are disabled, keep GPU idle and avoid forcing a profile.
+  echo "none"
+}
+
 case "${PROFILE}" in
+  auto)
+    resolved="$(resolve_auto_profile)"
+    if [[ "${resolved}" == "none" ]]; then
+      log "Auto profile: both deployments are scaled to 0. Nothing to apply."
+      ${K3S} -n "${OLLAMA_NS}" get deploy "${OLLAMA_DEPLOY}" -o wide || true
+      ${K3S} -n "${COMFY_NS}" get deploy "${COMFY_DEPLOY}" -o wide || true
+      exit 0
+    fi
+
+    log "Auto profile resolved to: ${resolved}"
+    exec "$0" "${resolved}"
+    ;;
   ollama)
     log "Applying profile: ollama (exclusive full GPU)"
     patch_gpu_mem_percent "${OLLAMA_NS}" "${OLLAMA_DEPLOY}" "ollama" "100"
