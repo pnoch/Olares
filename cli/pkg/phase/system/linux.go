@@ -9,6 +9,7 @@ import (
 	"github.com/beclab/Olares/cli/pkg/bootstrap/precheck"
 	"github.com/beclab/Olares/cli/pkg/common"
 	"github.com/beclab/Olares/cli/pkg/container"
+	"github.com/beclab/Olares/cli/pkg/core/connector"
 	"github.com/beclab/Olares/cli/pkg/core/module"
 	"github.com/beclab/Olares/cli/pkg/daemon"
 	"github.com/beclab/Olares/cli/pkg/gpu"
@@ -84,10 +85,10 @@ func (l *linuxPhaseBuilder) build() []module.Module {
 			return []module.Module{
 				&amdgpu.InstallAmdRocmModule{},
 				&amdgpu.InstallAmdContainerToolkitModule{Skip: func() bool {
-					if l.runtime.GetSystemInfo().IsAmdGPUOrAPU() {
-						return false
-					}
-					return true
+					si := l.runtime.GetSystemInfo()
+					// Only run AMD container toolkit setup where it is currently supported.
+					return !(si.IsAmdGPUOrAPU() && si.IsUbuntu() &&
+						(si.IsUbuntuVersionEqual(connector.Ubuntu2204) || si.IsUbuntuVersionEqual(connector.Ubuntu2404)))
 				}(),
 				},
 				&gpu.InstallDriversModule{
