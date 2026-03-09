@@ -110,3 +110,31 @@ Profiles:
   - both replicas = 0 -> no-op
 
 The script also clears stale `GPUBinding` resources to avoid stuck `Pending` pods after profile switches.
+
+## Switch on app open (recommended)
+
+If your launcher can execute a command on app-open, use:
+
+```bash
+sudo bash tools/dgx/switch_gpu_on_app_open.sh ollama
+sudo bash tools/dgx/switch_gpu_on_app_open.sh comfyui
+```
+
+This wrapper:
+
+- maps app-open event to profile (`ollama` or `comfyui`);
+- adds a lock to avoid concurrent switches;
+- adds cooldown (`COOLDOWN_SECONDS`, default 180) to avoid rapid flip-flop.
+
+Optional parameters:
+
+```bash
+sudo COOLDOWN_SECONDS=300 bash tools/dgx/switch_gpu_on_app_open.sh ollama
+sudo FORCE=true bash tools/dgx/switch_gpu_on_app_open.sh comfyui
+```
+
+State files are stored in:
+
+```text
+/var/lib/olares-gpu-switch
+```
