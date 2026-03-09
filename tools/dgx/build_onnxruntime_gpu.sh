@@ -29,8 +29,15 @@ mkdir -p $BUILD_DIR
 cd $BUILD_DIR
 git clone --depth 1 --branch $ORT_TAG https://github.com/microsoft/onnxruntime.git .
 pip install --no-cache-dir --break-system-packages wheel
-./build.sh --config Release --build_shared_lib --parallel --use_cuda --cuda_home $CUDA_HOME --cudnn_home $CUDA_HOME --cmake_generator Ninja --use_openmp || true
-WHEEL=$(realpath build/Linux/Arm64/Release/dist/*.whl)
+./build.sh --config Release --build_shared_lib --parallel --use_cuda --cuda_home $CUDA_HOME --cudnn_home $CUDA_HOME --cmake_generator Ninja --use_openmp
+cd build/Linux/Arm64/Release/dist
+shopt -s nullglob
+files=(*.whl)
+if [[ ${#files[@]} -eq 0 ]]; then
+  log "no wheel found: build/Linux/Arm64/Release/dist/*.whl"
+  exit 1
+fi
+WHEEL=$(realpath "${files[0]}")
 python3 -m pip install --target=/app/backend/pipx --break-system-packages "${WHEEL}"
 " 
 log "Build complete. Uploaded wheel to /app/backend/pipx"
