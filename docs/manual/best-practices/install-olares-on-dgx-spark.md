@@ -41,7 +41,7 @@ sudo VERSION=1.12.4 \
   REMOVE_DOCKER=true \
   ENABLE_HAMI_GB10_FIX=true \
   HAMI_PRECONFIGURED_DEVICE_MEMORY_MB=131072 \
-  HAMI_IMAGE=projecthami/hami:<tag-with-pr-1637> \
+  HAMI_IMAGE=beclab/hami:v2.6.11 \
   bash tools/dgx/install_olares_dgx_spark.sh
 ```
 
@@ -50,12 +50,12 @@ sudo VERSION=1.12.4 \
 - `REMOVE_DOCKER`: `true` or `false`.
 - `ENABLE_HAMI_GB10_FIX`: `true` or `false`.
 - `HAMI_PRECONFIGURED_DEVICE_MEMORY_MB`: fallback GPU memory for unified-memory GPUs (GB10 default `131072`).
-- `HAMI_IMAGE`: optional full image reference for HAMi daemonset. Leave empty to keep current image.
+- `HAMI_IMAGE`: HAMi image used by device-plugin and monitor (default `beclab/hami:v2.6.11`).
 
 ## Notes for GB10
 
 - PR `Project-HAMi/HAMi#1637` is required to avoid `nvml get memory error ret=Not Supported` panic.
-- If your bundled HAMi image does not include that PR, set `HAMI_IMAGE` to a fixed build that includes it.
+- This guide defaults to `beclab/hami:v2.6.11`, which is intended to avoid the GB10 crash path.
 
 ## Interactive step
 

@@ -6,8 +6,8 @@ CLI_PATH="${CLI_PATH:-/tmp/olares-cli}"
 REMOVE_DOCKER="${REMOVE_DOCKER:-true}"
 ENABLE_HAMI_GB10_FIX="${ENABLE_HAMI_GB10_FIX:-true}"
 HAMI_PRECONFIGURED_DEVICE_MEMORY_MB="${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB:-131072}"
-# If empty, script keeps the current image and only patches device config.
-HAMI_IMAGE="${HAMI_IMAGE:-}"
+# Default to a known-good HAMi image for GB10 unified-memory GPUs.
+HAMI_IMAGE="${HAMI_IMAGE:-beclab/hami:v2.6.11}"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -188,7 +188,7 @@ main() {
   log "Starting DGX Spark Olares bootstrap"
   log "VERSION=${VERSION} CLI_PATH=${CLI_PATH}"
   log "REMOVE_DOCKER=${REMOVE_DOCKER} ENABLE_HAMI_GB10_FIX=${ENABLE_HAMI_GB10_FIX}"
-  log "HAMI_PRECONFIGURED_DEVICE_MEMORY_MB=${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB} HAMI_IMAGE=${HAMI_IMAGE:-<keep-current>}"
+  log "HAMI_PRECONFIGURED_DEVICE_MEMORY_MB=${HAMI_PRECONFIGURED_DEVICE_MEMORY_MB} HAMI_IMAGE=${HAMI_IMAGE}"
 
   prepare_system_packages
   remove_conflicting_runtimes
