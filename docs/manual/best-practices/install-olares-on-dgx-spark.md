@@ -86,3 +86,21 @@ If pods fail to resolve service names or cannot reach service IPs:
    ```bash
    sudo reboot
    ```
+
+## GPU app profiles (single-GPU nodes)
+
+For DGX Spark nodes with one GPU, use this helper to switch app GPU profiles:
+
+```bash
+sudo bash tools/dgx/switch_gpu_app_profile.sh ollama
+sudo bash tools/dgx/switch_gpu_app_profile.sh comfyui
+sudo bash tools/dgx/switch_gpu_app_profile.sh shared
+```
+
+Profiles:
+
+- `ollama`: full GPU to Ollama (`100%`), ComfyUI scaled down.
+- `comfyui`: full GPU to ComfyUI (`100%`), Ollama scaled down.
+- `shared`: best-effort `50/50` split (depends on HAMi behavior in your cluster).
+
+The script also clears stale `GPUBinding` resources to avoid stuck `Pending` pods after profile switches.
