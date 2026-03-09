@@ -217,3 +217,13 @@ sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
   sh -c 'PYTHONPATH=/app/backend/pipx:$PYTHONPATH python3 -m pip install --target=/app/backend/pipx \
      --break-system-packages --no-cache-dir --no-build-isolation dlib'
 ```
+
+## Building ONNX Runtime GPU
+
+`onnxruntime-gpu` does not publish ARM64 wheels, so build it once per cluster and install into the writable target:
+
+```bash
+sudo bash tools/dgx/build_onnxruntime_gpu.sh
+```
+
+The script clones ONNX Runtime `v2.16.1`, installs the necessary build toolchain inside the ComfyUI pod, runs `./build.sh` with `--use_cuda --use_openmp`, and pip-installs the resulting `onnxruntime_gpu` wheel into `/app/backend/pipx`. After it completes, the ComfyUI GUI can load `onnxruntime-gpu` without needing system-level package writes.
