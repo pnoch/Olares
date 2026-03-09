@@ -3,7 +3,14 @@ set -euo pipefail
 
 NAMESPACE="comfyuisharev2server-shared"
 DEPLOYMENT="comfyuishare"
-POD="$(sudo k3s kubectl -n "$NAMESPACE" get pod -l io.kompose.service=comfyuishare -o jsonpath='{.items[0].metadata.name}')"
+POD=""
+while [[ -z "$POD" ]]; do
+  POD="$(sudo k3s kubectl -n "$NAMESPACE" get pod -l io.kompose.service=comfyuishare -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "$POD" ]]; then
+    printf '[%s] waiting for ComfyUI pod…\\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    sleep 3
+  fi
+done
 ORT_TAG="v2.16.1"
 BUILD_DIR="/tmp/onnxruntime"
 CUDA_HOME="/usr/local/cuda"
