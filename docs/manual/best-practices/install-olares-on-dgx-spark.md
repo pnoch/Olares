@@ -196,3 +196,24 @@ sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
 ```
 
 This keeps new packages inside `/app/backend/pipx` and honors pip’s `--break-system-packages` policy.
+
+## Installing dlib (and other wheels)
+
+dlib needs a working `cmake` to build. After the steps above, run these inside the ComfyUI pod once:
+
+```bash
+sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
+  apt-get update
+sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
+  apt-get install -y cmake build-essential
+sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
+  python3 -m pip install --break-system-packages --no-cache-dir cmake
+```
+
+Then install `dlib` (or any other wheel requiring CMake) into your writable pip target with build isolation disabled so the builder sees the installed modules:
+
+```bash
+sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
+  sh -c 'PYTHONPATH=/app/backend/pipx:$PYTHONPATH python3 -m pip install --target=/app/backend/pipx \
+     --break-system-packages --no-cache-dir --no-build-isolation dlib'
+```
