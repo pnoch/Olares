@@ -85,6 +85,23 @@ disable_hami_device_plugin_if_requested() {
     -p '{"spec":{"template":{"spec":{"nodeSelector":{"hami-disabled":"true"}}}}}' || true
 }
 
+print_generated_account_info() {
+  local install_log
+  install_log="/root/.olares/versions/${VERSION}/logs/install.log"
+
+  if [[ ! -f "${install_log}" ]]; then
+    log "Install log not found at ${install_log}; skipping account/password display."
+    return
+  fi
+
+  log "Generated account information from install log:"
+  if command -v rg >/dev/null 2>&1; then
+    rg -n -i "using Olares Local Name|using Olares ID|using password" "${install_log}" || true
+  else
+    grep -niE "using Olares Local Name|using Olares ID|using password" "${install_log}" || true
+  fi
+}
+
 print_post_install_status() {
   local host_ip
   host_ip="$(hostname -I | awk '{print $1}')"
@@ -94,6 +111,8 @@ print_post_install_status() {
 
   log "Non-running pods (if any):"
   k3s kubectl get pods -A | grep -E 'CrashLoopBackOff|Error|Pending|Init:' || true
+
+  print_generated_account_info
 
   cat <<EOF
 ------------------------------------------------------------------------------
