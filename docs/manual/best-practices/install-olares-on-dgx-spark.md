@@ -162,3 +162,37 @@ The script:
 - resolves latest stable `beclab/open-webui-open-webui` tag when no tag is given;
 - updates deployment image and `USER_AGENT`;
 - waits for rollout and auto-rolls back on failure.
+
+## ComfyUI dependency installs
+
+ComfyUI runs inside an externally managed Python environment, so GUI-triggered `pip install` commands fail unless they use a writable cache + `--break-system-packages`. We configure that environment for you:
+
+1. Create a writable config/cache inside the ComfyUI pod (done automatically, but you can rerun these if you rebuild the app):
+
+```bash
+sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
+  sh -c 'mkdir -p /root/.config/pip /root/.cache/pip && cat <<'"'"'EOF'"'"' >/root/.config/pip/pip.conf
+[global]
+break-system-packages = true
+cache-dir = /root/.cache/pip
+EOF
+chown -R root:root /root/.config/pip /root/.cache/pip'
+```
+
+2. Make sure ComfyUI points at the additional site-packages:
+
+```bash
+sudo k3s kubectl -n comfyuisharev2server-shared set env deployment/comfyuishare \
+  PYTHONPATH=/app/backend/pipx:$PYTHONPATH PIP_CONFIG_FILE=/root/.config/pip/pip.conf \
+  PIP_CACHE_DIR=/root/.cache/pip
+sudo k3s kubectl -n comfyuisharev2server-shared rollout restart deployment/comfyuishare
+```
+
+3. Install per-model deps without modifying the base Python install:
+
+```bash
+sudo k3s kubectl -n comfyuisharev2server-shared exec deploy/comfyuishare -- \
+  sh -c 'python3 -m pip install --target=/app/backend/pipx --no-cache-dir pilgram'
+```
+
+This keeps new packages inside `/app/backend/pipx` and honors pip’s `--break-system-packages` policy.
