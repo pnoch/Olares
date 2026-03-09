@@ -140,3 +140,25 @@ State files are stored in:
 ```text
 /var/lib/olares-gpu-switch
 ```
+
+## Open WebUI self-managed updates
+
+If Market updates lag behind upstream, you can update Open WebUI directly:
+
+```bash
+sudo bash tools/dgx/upgrade_openwebui.sh
+```
+
+Optional:
+
+```bash
+sudo bash tools/dgx/upgrade_openwebui.sh --tag v0.8.10
+sudo bash tools/dgx/upgrade_openwebui.sh --image docker.io/beclab/open-webui-open-webui:v0.8.10
+```
+
+The script:
+
+- auto-discovers your Open WebUI deployment by Olares labels;
+- resolves latest stable `beclab/open-webui-open-webui` tag when no tag is given;
+- updates deployment image and `USER_AGENT`;
+- waits for rollout and auto-rolls back on failure.
