@@ -177,6 +177,9 @@ Wizard access (NodePort):
 If pod-to-service networking is broken after install:
   1) systemctl restart k3s
   2) if still broken, reboot the host
+
+If ComfyUI Network Manager shows GitHub/PyPI/HuggingFace as inaccessible:
+  sudo bash tools/dgx/fix_network_manager_dns.sh
 ------------------------------------------------------------------------------
 EOF
 }
